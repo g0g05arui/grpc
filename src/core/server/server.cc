@@ -205,7 +205,7 @@ void Server::ListenerState::Stop() {
 }
 
 void Server::ListenerState::on_tcp_fd(int fd) {
-  if (use_koma_) {
+  if (use_koma_) { // test
     koma_rx_manager_->on_accepted_tcp(fd);
   }
 }
