@@ -39,6 +39,7 @@
 #include "src/core/call/metadata_batch.h"
 #include "src/core/channelz/channelz.h"
 #include "src/core/filter/blackboard.h"
+#include "src/core/koma/koma_rx_manager.h"
 #include "src/core/lib/channel/channel_args.h"
 #include "src/core/lib/channel/channel_fwd.h"
 #include "src/core/lib/channel/channel_stack.h"
@@ -227,7 +228,7 @@ class Server : public ServerInterface,
   class ListenerState : public RefCounted<ListenerState> {
    public:
     explicit ListenerState(RefCountedPtr<Server> server,
-                           OrphanablePtr<ListenerInterface> l);
+                           OrphanablePtr<ListenerInterface> l, bool use_koma);
 
     void Start();
 
@@ -266,8 +267,12 @@ class Server : public ServerInterface,
     grpc_event_engine::experimental::EventEngine* event_engine() const {
       return event_engine_;
     }
-
+    void on_tcp_fd(int fd); // Mihai : add to koma manager if koma enabled
    private:
+
+    std::unique_ptr<koma_rx_manager> koma_rx_manager_;
+    bool use_koma_;
+
     friend class grpc_core::testing::ListenerStateTestPeer;
 
     class ConfigFetcherWatcher : public ServerConfigFetcher::WatcherInterface {

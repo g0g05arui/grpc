@@ -568,6 +568,9 @@ void NewChttp2ServerListener::OnAccept(
       grpc_tcp_server_ref(self->tcp_server_);
     }
   }
+  int tcp_fd = tcp->vtable->get_fd(tcp);
+  self->listener_state_->on_tcp_fd(tcp_fd);
+  // TODO(mihai) : do we still need this path?
   auto memory_owner =
       self->listener_state_->memory_quota()->CreateMemoryOwner();
   auto connection = memory_owner.MakeOrphanable<ActiveConnection>(

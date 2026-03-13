@@ -134,7 +134,7 @@ void Server::ListenerState::ConfigFetcherWatcher::StopServing() {
 //
 
 Server::ListenerState::ListenerState(RefCountedPtr<Server> server,
-                                     OrphanablePtr<ListenerInterface> l)
+                                     OrphanablePtr<ListenerInterface> l, bool use_koma = true)
     : server_(std::move(server)),
       memory_quota_(
           server_->channel_args().GetObject<ResourceQuota>()->memory_quota()),
@@ -143,7 +143,15 @@ Server::ListenerState::ListenerState(RefCountedPtr<Server> server,
           server_->channel_args()
               .GetObject<grpc_event_engine::experimental::EventEngine>()),
       listener_(std::move(l)),
-      blackboards_(PerCpuOptions().SetMaxShards(16)) {
+      blackboards_(PerCpuOptions().SetMaxShards(16)),
+      use_koma_(use_koma) {
+        // TODO(mihai) think about nr of default threads / cores used
+  if(use_koma){
+    koma_rx_manager_ = std::make_unique<koma_rx_manager>(5);
+    if(!koma_rx_manager_){
+      grpc_core::Crash("Failed to create koma_rx_manager");
+    }
+  }
   auto max_allowed_incoming_connections =
       server_->channel_args().GetInt(GRPC_ARG_MAX_ALLOWED_INCOMING_CONNECTIONS);
   if (max_allowed_incoming_connections.has_value()) {
@@ -153,6 +161,13 @@ Server::ListenerState::ListenerState(RefCountedPtr<Server> server,
 }
 
 void Server::ListenerState::Start() {
+  if(use_koma_){
+    absl::Status status = koma_rx_manager_->start();
+    if(!status.ok()){
+      grpc_core::Crash("Failed to start koma_rx_manager: %s", status.ToString().c_str());
+    }
+  }
+
   if (server_->config_fetcher() != nullptr) {
     auto watcher = std::make_unique<ConfigFetcherWatcher>(this);
     config_fetcher_watcher_ = watcher.get();
@@ -187,6 +202,12 @@ void Server::ListenerState::Stop() {
                     grpc_schedule_on_exec_ctx);
   listener_->SetOnDestroyDone(&destroy_done_);
   listener_.reset();
+}
+
+void Server::ListenerState::on_tcp_fd(int fd) {
+  if (use_koma_) {
+    koma_rx_manager_->on_accepted_tcp(fd);
+  }
 }
 
 std::optional<ChannelArgs> Server::ListenerState::AddLogicalConnection(

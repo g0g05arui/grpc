@@ -25,7 +25,7 @@ namespace hpack_constants {
 // Per entry overhead bytes as per the spec
 static constexpr uint32_t kEntryOverhead = 32;
 // Initial table size as per the spec
-static constexpr uint32_t kInitialTableSize = 4096;
+static constexpr uint32_t kInitialTableSize = 0;
 
 // last index in the static table
 static constexpr uint32_t kLastStaticEntry = 61;
