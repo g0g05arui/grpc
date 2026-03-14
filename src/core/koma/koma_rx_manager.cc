@@ -4,12 +4,16 @@
 #include <memory>
 #include <functional>
 #include <thread>
+#include <iostream>
 #include "absl/status/status.h"
 #include "src/core/koma/koma_common.h"
+
+koma_rx_manager::~koma_rx_manager() { shutdown(); }
 
 absl::Status koma_rx_manager::start() {
 
     absl::MutexLock lock(&m_mu);
+    std::cout << "Starting koma rx manager" << std::endl;
     if(!m_workers.empty()){
         return absl::Status(absl::StatusCode::kAlreadyExists, "already started");
     }
@@ -39,10 +43,22 @@ void koma_rx_manager::on_accepted_tcp(int fd) {
     koma_attach(m_workers.front()->koma_fd, fd); // attach to the first / any worker
 }
 
+void koma_rx_manager::shutdown() {
+    absl::MutexLock lock(&m_mu);
+    for (auto& worker : m_workers) {
+        if (worker->thread.joinable()) worker->thread.join();
+        cleanup(*worker);
+    }
+    m_workers.clear();
+}
+
 void koma_rx_manager::worker_loop(const koma_rx_manager::koma_worker& worker) {
     // TODO(mihai) start read loop
+    std::cout << "Started worker Loop for " << worker.id << '\n';
 }
 
 void koma_rx_manager::cleanup(const koma_rx_manager::koma_worker& worker) {
     // TODO(mihai) cleanup worker resources
+    std::cout << "Cleanup worker" << worker.id << '\n';
+
 }

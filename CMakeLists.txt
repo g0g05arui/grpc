@@ -525,7 +525,7 @@ if(WIN32)
   set(_gRPC_ALLTARGETS_LIBRARIES ${_gRPC_ALLTARGETS_LIBRARIES} ws2_32 crypt32)
   set(_gRPC_STATIC_WIN32 STATIC)
 endif()
-  
+
 if(BUILD_SHARED_LIBS AND WIN32)
 
 # Currently for shared lib on Windows (i.e. a DLL) certain bits of source code
@@ -2265,6 +2265,8 @@ endif()
 
 add_library(grpc
   src/core/call/call_arena_allocator.cc
+  src/core/koma/koma_common.cc
+  src/core/koma/koma_rx_manager.cc
   src/core/call/call_filters.cc
   src/core/call/call_spine.cc
   src/core/call/call_state.cc
