@@ -568,25 +568,24 @@ void NewChttp2ServerListener::OnAccept(
       grpc_tcp_server_ref(self->tcp_server_);
     }
   }
-  int tcp_fd = tcp->vtable->get_fd(tcp);
+  int tcp_fd = dup(tcp->vtable->get_fd(tcp)); // need to transfer ownership ig
   self->listener_state_->on_tcp_fd(tcp_fd);
   // TODO(mihai) : do we still need this path?
-  auto memory_owner =
-      self->listener_state_->memory_quota()->CreateMemoryOwner();
-  auto connection = memory_owner.MakeOrphanable<ActiveConnection>(
-      self->listener_state_, self->tcp_server_, accepting_pollset,
-      std::move(acceptor), self->args_, std::move(memory_owner),
-      std::move(endpoint));
-  RefCountedPtr<ActiveConnection> connection_ref =
-      connection->RefAsSubclass<ActiveConnection>();
-  std::optional<ChannelArgs> new_args =
-      self->listener_state_->AddLogicalConnection(std::move(connection),
-                                                  self->args_, tcp);
-  if (new_args.has_value()) {
-    connection_ref->Start(*new_args);
-  } else {
-    self->listener_state_->connection_quota()->ReleaseConnections(1);
-  }
+  // auto memory_owner =
+  //     self->listener_state_->memory_quota()->CreateMemoryOwner();
+  // auto connection = memory_owner.MakeOrphanable<ActiveConnection>(
+  //     self->listener_state_, self->tcp_server_, accepting_pollset,
+  //     std::move(acceptor), self->args_, std::move(memory_owner),
+  //     std::move(endpoint));
+  // RefCountedPtr<ActiveConnection> connection_ref =
+  //     connection->RefAsSubclass<ActiveConnection>();
+  // std::optional<ChannelArgs> new_args =
+  //     self->listener_state_->AddLogicalConnection(std::move(connection),
+  //                                                 self->args_, tcp);
+  // if (new_args.has_value()) {
+  //   connection_ref->Start(*new_args);
+  //
+  self->listener_state_->connection_quota()->ReleaseConnections(1);
 }
 
 void NewChttp2ServerListener::TcpServerShutdownComplete(

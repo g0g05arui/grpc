@@ -5,9 +5,12 @@
 #include <unordered_map>
 #include <vector>
 #include <atomic>
+#include <deque>
 #include "absl/base/thread_annotations.h"
 #include "absl/status/status.h"
 #include "absl/synchronization/mutex.h"
+
+struct epoll_event;
 
 class koma_rx_manager {
 
@@ -36,15 +39,21 @@ private:
         //  if we needed to load balance, but koma socks can read from any associated fd
         int epoll_fd = -1;
         int event_fd = -1;
+        absl::Mutex pending_mu;
+        std::deque<int> pending_tcp_fds ABSL_GUARDED_BY(pending_mu);
         std::thread thread;
     };
 
-    void worker_loop(const koma_worker& worker);
+    void worker_loop(koma_worker* worker);
+    void handle_worker_events(koma_worker* worker, const struct epoll_event* events, int nfds);
+    void handle_worker_eventfd(koma_worker* worker);
+    void handle_worker_komafd(koma_worker* worker);
 
-    void cleanup(const koma_worker& worker);
+    void cleanup(koma_worker& worker);
 
     size_t m_num_threads;
     std::vector<std::unique_ptr<koma_worker>> m_workers ABSL_GUARDED_BY(m_mu);
+    size_t m_next_worker ABSL_GUARDED_BY(m_mu) = 0;
     std::unordered_map<int, int> m_tcp_fd_to_worker;
     absl::Mutex m_mu;
 };
