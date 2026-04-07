@@ -1,5 +1,7 @@
 #pragma once
 
+#define NUM_KOMA_SOCKETS 8  // must match koma/koma.h
+
 extern "C"{
   #include <linux/kcm.h>
   #ifndef AF_KOMA

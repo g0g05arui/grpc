@@ -39,6 +39,7 @@
 #include <utility>
 #include <vector>
 
+#include "src/core/koma/koma_rx_manager.h"
 #include "src/core/call/interception_chain.h"
 #include "src/core/call/server_call.h"
 #include "src/core/channelz/channel_trace.h"
@@ -134,7 +135,8 @@ void Server::ListenerState::ConfigFetcherWatcher::StopServing() {
 //
 
 Server::ListenerState::ListenerState(RefCountedPtr<Server> server,
-                                     OrphanablePtr<ListenerInterface> l, bool use_koma = true)
+                                     OrphanablePtr<ListenerInterface> l,
+                                     bool use_koma = true)
     : server_(std::move(server)),
       memory_quota_(
           server_->channel_args().GetObject<ResourceQuota>()->memory_quota()),
@@ -147,7 +149,7 @@ Server::ListenerState::ListenerState(RefCountedPtr<Server> server,
       use_koma_(use_koma) {
         // TODO(mihai) think about nr of default threads / cores used
   if(use_koma){
-    koma_rx_manager_ = std::make_unique<koma_rx_manager>(5);
+    koma_rx_manager_ = std::make_unique<koma_rx_manager>();
     if(!koma_rx_manager_){
       grpc_core::Crash("Failed to create koma_rx_manager");
     }
@@ -185,6 +187,10 @@ void Server::ListenerState::Start() {
 }
 
 void Server::ListenerState::Stop() {
+  if (use_koma_ && koma_rx_manager_ != nullptr) {
+    koma_rx_manager_->shutdown();
+  }
+
   absl::flat_hash_set<OrphanablePtr<ListenerInterface::LogicalConnection>>
       connections;
   {
@@ -204,9 +210,9 @@ void Server::ListenerState::Stop() {
   listener_.reset();
 }
 
-void Server::ListenerState::on_tcp_fd(int fd) {
+void Server::ListenerState::on_tcp_fd(int attach_fd, int write_fd) {
   if (use_koma_) { // test
-    koma_rx_manager_->on_accepted_tcp(fd);
+    koma_rx_manager_->on_accepted_tcp(koma_rx_manager::pending_conn{attach_fd, write_fd});
   }
 }
 

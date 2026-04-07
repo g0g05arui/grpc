@@ -568,23 +568,35 @@ void NewChttp2ServerListener::OnAccept(
       grpc_tcp_server_ref(self->tcp_server_);
     }
   }
-  int tcp_fd = dup(tcp->vtable->get_fd(tcp)); // need to transfer ownership ig
-  self->listener_state_->on_tcp_fd(tcp_fd);
-  // TODO(mihai) : do we still need this path?
-  // auto memory_owner =
-  //     self->listener_state_->memory_quota()->CreateMemoryOwner();
-  // auto connection = memory_owner.MakeOrphanable<ActiveConnection>(
-  //     self->listener_state_, self->tcp_server_, accepting_pollset,
-  //     std::move(acceptor), self->args_, std::move(memory_owner),
-  //     std::move(endpoint));
-  // RefCountedPtr<ActiveConnection> connection_ref =
-  //     connection->RefAsSubclass<ActiveConnection>();
-  // std::optional<ChannelArgs> new_args =
-  //     self->listener_state_->AddLogicalConnection(std::move(connection),
-  //                                                 self->args_, tcp);
-  // if (new_args.has_value()) {
-  //   connection_ref->Start(*new_args);
-  //
+  if (self->listener_state_->use_koma()) {
+      const int raw_fd = tcp->vtable->get_fd(tcp);
+      if (raw_fd >= 0) {
+          int attach_fd = dup(raw_fd);
+          int write_fd  = dup(raw_fd);   // kept for TX, see Gap 1 below
+          if (attach_fd >= 0 && write_fd >= 0) {
+              self->listener_state_->on_tcp_fd(attach_fd, write_fd);
+          }
+      }
+      // release the connection quota and return — do NOT create ActiveConnection
+      self->listener_state_->connection_quota()->ReleaseConnections(1);
+      return;
+  }
+  // normal path below ...
+  // TODO(mihai) : do we still need this path? ?Ig so
+  auto memory_owner =
+      self->listener_state_->memory_quota()->CreateMemoryOwner();
+  auto connection = memory_owner.MakeOrphanable<ActiveConnection>(
+      self->listener_state_, self->tcp_server_, accepting_pollset,
+      std::move(acceptor), self->args_, std::move(memory_owner),
+      std::move(endpoint));
+  RefCountedPtr<ActiveConnection> connection_ref =
+      connection->RefAsSubclass<ActiveConnection>();
+  std::optional<ChannelArgs> new_args =
+      self->listener_state_->AddLogicalConnection(std::move(connection),
+                                                  self->args_, tcp);
+  if (new_args.has_value()) {
+    connection_ref->Start(*new_args);
+  }
   self->listener_state_->connection_quota()->ReleaseConnections(1);
 }
 

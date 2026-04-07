@@ -5,6 +5,8 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <errno.h>
+#include <signal.h>
+#include <cstring>
 #include <memory>
 #include <functional>
 #include <thread>
@@ -15,6 +17,7 @@
 koma_rx_manager::~koma_rx_manager() { shutdown(); }
 
 absl::Status koma_rx_manager::start() {
+    signal(SIGPIPE, SIG_IGN);
 
     absl::MutexLock lock(&m_mu);
     std::cout << "Starting koma rx manager" << std::endl;
@@ -46,15 +49,17 @@ absl::Status koma_rx_manager::start() {
     }
     return absl::OkStatus();
 }
-void koma_rx_manager::on_accepted_tcp(int fd) {
+void koma_rx_manager::on_accepted_tcp(pending_conn conn) {
     absl::MutexLock lock(&m_mu);
-    if(m_workers.empty()) return; // maybe should give an error
-
-    const size_t idx = m_next_worker++ % m_workers.size();
-    koma_worker* worker = m_workers[idx].get();
+    if (m_workers.empty()) {
+        close(conn.attach_fd);
+        close(conn.write_fd);
+        return;
+    }
+    koma_worker* worker = m_workers[m_next_worker++ % m_workers.size()].get();
     {
         absl::MutexLock pending_lock(&worker->pending_mu);
-        worker->pending_tcp_fds.push_back(fd);
+        worker->pending_tcp_fds.push_back(conn);
     }
     const uint64_t one = 1;
     (void)write(worker->event_fd, &one, sizeof(one));
@@ -91,6 +96,8 @@ void koma_rx_manager::worker_loop(koma_rx_manager::koma_worker* worker) {
         return;
     }
 
+    koma_pull(worker->koma_fd);
+
     epoll_event events[8];
     while (!worker->stopped) {
         const int nfds = epoll_wait(worker->epoll_fd, events, 8, -1);
@@ -119,19 +126,46 @@ void koma_rx_manager::handle_worker_eventfd(koma_rx_manager::koma_worker* worker
     uint64_t counter = 0;
     (void)read(worker->event_fd, &counter, sizeof(counter));
 
-    std::deque<int> pending;
+    std::deque<pending_conn> pending;
     {
         absl::MutexLock pending_lock(&worker->pending_mu);
         pending.swap(worker->pending_tcp_fds);
     }
-    while (!pending.empty()) {
-        int tcp_fd = pending.front();
-        pending.pop_front();
-        if (koma_attach(worker->koma_fd, tcp_fd) < 0) {
-            std::cout << "koma_attach failed for fd " << tcp_fd << '\n';
-            close(tcp_fd);
+
+    static const uint8_t server_preface[18] = {
+        0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00,  // SETTINGS
+        0x00, 0x00, 0x00, 0x04, 0x01, 0x00, 0x00, 0x00, 0x00,  // SETTINGS ACK
+    };
+
+    for (auto& conn : pending) {
+        // read preface
+        char buf[24] = {0};
+        ssize_t recvd = 0;
+        while (recvd < 24) {
+            ssize_t r = recv(conn.attach_fd, buf + recvd, 24 - recvd, 0);
+            if (r > 0) { recvd += r; continue; }
+            if (r < 0 && errno == EAGAIN) continue;
+            std::cout << "Preface recv failed after " << recvd << " bytes\n";
+            break;
         }
-        std::cout << "Attacahed tcp fd #" << tcp_fd << '\n';
+
+        if (recvd == 24) {
+            if (koma_attach(worker->koma_fd, conn.attach_fd) < 0) {
+                std::cout << "koma_attach failed for fd " << conn.attach_fd << '\n';
+            } else {
+                ssize_t sent = send(conn.write_fd, server_preface, sizeof(server_preface), MSG_NOSIGNAL);
+                if (sent < 0) {
+                    std::cout << "Failed to send server preface to fd " << conn.write_fd
+                              << ": " << strerror(errno) << '\n';
+                } else {
+                    std::cout << "Attached tcp fd #" << conn.attach_fd
+                              << " to worker " << worker->id << '\n';
+                }
+            }
+        }
+
+        close(conn.attach_fd);
+        close(conn.write_fd);  // TODO(mihai): keep write_fd alive once response sending is implemented
     }
 }
 
@@ -140,7 +174,7 @@ void koma_rx_manager::handle_worker_komafd(koma_rx_manager::koma_worker* worker)
         return;
     }
 
-    while (true) {
+    while (true) { // read "in abyss", basically discard all data
         char buf[4096];
         iovec iov{};
         iov.iov_base = buf;
@@ -153,9 +187,7 @@ void koma_rx_manager::handle_worker_komafd(koma_rx_manager::koma_worker* worker)
         if (n <= 0) {
             break;
         }
-
         std::cout << "Received " << n << " bytes\n";
-
     }
 }
 

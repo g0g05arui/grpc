@@ -267,7 +267,8 @@ class Server : public ServerInterface,
     grpc_event_engine::experimental::EventEngine* event_engine() const {
       return event_engine_;
     }
-    void on_tcp_fd(int fd); // Mihai : add to koma manager if koma enabled
+    void on_tcp_fd(int attach_fd, int write_fd); // Mihai : add to koma manager if koma enabled
+    bool use_koma(){ return use_koma_;}
    private:
 
     std::unique_ptr<koma_rx_manager> koma_rx_manager_;

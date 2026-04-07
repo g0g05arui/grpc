@@ -9,6 +9,7 @@
 #include "absl/base/thread_annotations.h"
 #include "absl/status/status.h"
 #include "absl/synchronization/mutex.h"
+#include "koma_common.h"
 
 struct epoll_event;
 
@@ -16,7 +17,13 @@ class koma_rx_manager {
 
 
 public:
-    explicit koma_rx_manager(size_t num_threads) : m_num_threads(num_threads){};
+
+    struct pending_conn{
+        int attach_fd;
+        int write_fd;
+    };
+
+    explicit koma_rx_manager(size_t num_threads = NUM_KOMA_SOCKETS) : m_num_threads(num_threads){};
     ~koma_rx_manager();
 
 
@@ -25,7 +32,8 @@ public:
 
     void shutdown();
 
-    void on_accepted_tcp(int tcp_fd);
+    void on_accepted_tcp(pending_conn conn);
+
 
 
 private:
@@ -40,7 +48,7 @@ private:
         int epoll_fd = -1;
         int event_fd = -1;
         absl::Mutex pending_mu;
-        std::deque<int> pending_tcp_fds ABSL_GUARDED_BY(pending_mu);
+        std::deque<pending_conn> pending_tcp_fds ABSL_GUARDED_BY(pending_mu);
         std::thread thread;
     };
 
@@ -54,6 +62,6 @@ private:
     size_t m_num_threads;
     std::vector<std::unique_ptr<koma_worker>> m_workers ABSL_GUARDED_BY(m_mu);
     size_t m_next_worker ABSL_GUARDED_BY(m_mu) = 0;
-    std::unordered_map<int, int> m_tcp_fd_to_worker;
+    // std::unordered_map<int, int> m_tcp_fd_to_worker;
     absl::Mutex m_mu;
 };
