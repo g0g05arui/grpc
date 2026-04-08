@@ -13,11 +13,11 @@
 #include <iostream>
 #include "absl/random/bit_gen_ref.h"
 #include "absl/status/status.h"
-#include "call/metadata_batch.h"
-#include "ext/transport/chttp2/transport/frame.h"
-#include "ext/transport/chttp2/transport/hpack_parser.h"
+#include "src/core/call/metadata_batch.h"
+#include "src/core/ext/transport/chttp2/transport/frame.h"
+#include "src/core/ext/transport/chttp2/transport/hpack_parser.h"
 #include "koma_common.h"
-#include "util/shared_bit_gen.h"
+#include "src/core/util/shared_bit_gen.h"
 
 static void hpack_decode(grpc_core::HPackParser& parser, grpc_core::SliceBuffer& payload,
                            bool end_stream, grpc_metadata_batch& out) {
