@@ -1,14 +1,19 @@
 #pragma once
 
+#include <array>
+#include <functional>
 #include <memory>
+#include <string>
 #include <thread>
 #include <unordered_map>
 #include <vector>
 #include <atomic>
 #include <deque>
+#include <sys/socket.h>
 #include "absl/base/thread_annotations.h"
 #include "absl/status/status.h"
 #include "absl/synchronization/mutex.h"
+#include "ext/transport/chttp2/transport/hpack_parser.h"
 #include "koma_common.h"
 
 struct epoll_event;
@@ -38,7 +43,10 @@ public:
 
 private:
 
+    static constexpr int MAX_MSG_SIZE = 4 * 1024 * 1024 + 96;
+
     struct koma_worker {
+
         size_t id = 0;
         int koma_fd = -1;
         std::atomic<bool> stopped{false};
@@ -50,6 +58,9 @@ private:
         absl::Mutex pending_mu;
         std::deque<pending_conn> pending_tcp_fds ABSL_GUARDED_BY(pending_mu);
         std::thread thread;
+
+        std::array<uint8_t, MAX_MSG_SIZE> recv_buf;
+        grpc_core::HPackParser parser;
     };
 
     void worker_loop(koma_worker* worker);
