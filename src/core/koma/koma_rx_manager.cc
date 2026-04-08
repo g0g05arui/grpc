@@ -203,11 +203,10 @@ void koma_rx_manager::handle_worker_komafd(koma_rx_manager::koma_worker* worker)
         return;
     }
 
-    while (true) { // read "in abyss", basically discard all data
-        char buf[4096];
+    while (true) {
         iovec iov{};
-        iov.iov_base = buf;
-        iov.iov_len = sizeof(buf);
+        iov.iov_base = worker->recv_buf.data();
+        iov.iov_len = worker->recv_buf.size();
         msghdr msg{};
         msg.msg_iov = &iov;
         msg.msg_iovlen = 1;
