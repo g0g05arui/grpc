@@ -43,7 +43,7 @@
 #include <vector>
 #include "absl/container/flat_hash_map.h"
 #include "absl/strings/string_view.h"
-#include "koma/koma_dispatcher.h"
+#include "src/core/koma/koma_dispatcher.h"
 
 struct grpc_server;
 

@@ -34,7 +34,8 @@
 
 #include "absl/log/absl_check.h"
 #include "absl/log/absl_log.h"
-#include "koma/koma_common.h"
+#include "src/core/koma/koma_dispatcher.h"
+#include "src/core/koma/koma_common.h"
 
 namespace grpc {
 class ServerContextBase;

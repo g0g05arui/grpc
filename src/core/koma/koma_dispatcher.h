@@ -1,8 +1,8 @@
 #pragma once
 #include <functional>
-#include "lib/slice/slice.h"
+#include <string>
 
-using koma_handler = std::function<grpc_core::Slice(const uint8_t*, size_t)>;
+using koma_handler = std::function<std::string(const uint8_t*, size_t)>;
 
 class koma_dispatcher {
 public:
