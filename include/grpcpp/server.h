@@ -38,7 +38,12 @@
 
 #include <list>
 #include <memory>
+#include <string>
+#include <unordered_map>
 #include <vector>
+#include "absl/container/flat_hash_map.h"
+#include "absl/strings/string_view.h"
+#include "koma/koma_dispatcher.h"
 
 struct grpc_server;
 
@@ -55,10 +60,15 @@ class ExternalConnectionAcceptorImpl;
 ///
 /// Use a \a grpc::ServerBuilder to create, configure, and start
 /// \a Server instances.
-class Server : public ServerInterface, private internal::GrpcLibrary {
+class Server : public ServerInterface, private internal::GrpcLibrary, public koma_dispatcher {
  public:
   ~Server() ABSL_LOCKS_EXCLUDED(mu_) override;
+  koma_handler * find_handler(absl::string_view path) override{
+    auto it = koma_handlers.find(path);
+    if (it == koma_handlers.end()) return nullptr;
+    return &it->second;
 
+  }
   /// Block until the server shuts down.
   ///
   /// \warning The server must be either shutting down or some other thread must
@@ -130,6 +140,8 @@ class Server : public ServerInterface, private internal::GrpcLibrary {
   experimental_type experimental() { return experimental_type(this); }
 
  protected:
+  absl::flat_hash_map<std::string, koma_handler> koma_handlers;
+
   /// Register a service. This call does not take ownership of the service.
   /// The service must exist for the lifetime of the Server instance.
   bool RegisterService(const std::string* addr, Service* service) override;

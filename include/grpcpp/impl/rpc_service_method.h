@@ -34,6 +34,7 @@
 
 #include "absl/log/absl_check.h"
 #include "absl/log/absl_log.h"
+#include "koma/koma_common.h"
 
 namespace grpc {
 class ServerContextBase;
@@ -42,6 +43,7 @@ namespace internal {
 class MethodHandler {
  public:
   virtual ~MethodHandler() {}
+  virtual koma_handler to_koma_handler(){ return nullptr;}
   struct HandlerParameter {
     /// Constructor for HandlerParameter
     ///

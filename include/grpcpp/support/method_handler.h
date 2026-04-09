@@ -25,6 +25,7 @@
 #include <grpcpp/support/sync_stream.h>
 
 #include "absl/log/absl_check.h"
+#include "koma/koma_common.h"
 
 namespace grpc {
 
@@ -104,7 +105,18 @@ class RpcMethodHandler : public grpc::internal::MethodHandler {
           func,
       ServiceType* service)
       : func_(func), service_(service) {}
-
+  koma_handler to_koma_handler() override {
+    return [this](const uint8_t* body, size_t len) {
+        RequestType req;
+        if (!req.ParseFromArray(body, len)) {
+            return "";
+        }
+        ResponseType resp;
+        grpc::ServerContext ctx;
+        func_(service_, &ctx, &req, &resp);
+        return resp.SerializeAsString();
+    };
+  }
   void RunHandler(const HandlerParameter& param) final {
     ResponseType rsp;
     grpc::Status status = param.status;

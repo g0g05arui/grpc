@@ -1,5 +1,7 @@
 #pragma once
 
+#include <functional>
+#include "src/core/lib/slice/slice.h"
 #define NUM_KOMA_SOCKETS 8  // must match koma/koma.h
 
 extern "C"{
@@ -24,3 +26,4 @@ extern "C"{
   int koma_attach(int komafd, int csock);
   int koma_pull(int komafd);
 }
+

@@ -1075,6 +1075,9 @@ bool Server::RegisterService(const std::string* addr, grpc::Service* service) {
       method->set_server_tag(method_registration_tag);
     } else if (method->api_type() ==
                grpc::internal::RpcServiceMethod::ApiType::SYNC) {
+      if (auto fn = method->handler()->to_koma_handler()) {
+            koma_handlers[method->name()] = std::move(fn);
+      }
       for (const auto& value : sync_req_mgrs_) {
         value->AddSyncMethod(method.get(), method_registration_tag);
       }
