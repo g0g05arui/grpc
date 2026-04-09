@@ -125,10 +125,9 @@ void koma_rx_manager::worker_loop(koma_rx_manager::koma_worker* worker) {
         return;
     }
 
-    koma_pull(worker->koma_fd);
-
     epoll_event events[8];
     while (!worker->stopped) {
+        koma_pull(worker->koma_fd);
         const int nfds = epoll_wait(worker->epoll_fd, events, 8, -1);
         if (nfds < 0) {
             if (errno == EINTR) continue;
@@ -199,51 +198,46 @@ void koma_rx_manager::handle_worker_eventfd(koma_rx_manager::koma_worker* worker
 }
 
 void koma_rx_manager::handle_worker_komafd(koma_rx_manager::koma_worker* worker) {
-    if (koma_pull(worker->koma_fd) < 0) {
+    iovec iov{};
+    iov.iov_base = worker->recv_buf.data();
+    iov.iov_len = worker->recv_buf.size();
+    msghdr msg{};
+    msg.msg_iov = &iov;
+    msg.msg_iovlen = 1;
+
+    ssize_t n = recvmsg(worker->koma_fd, &msg, 0);
+    if (n <= 0) {
         return;
     }
 
-    while (true) {
-        iovec iov{};
-        iov.iov_base = worker->recv_buf.data();
-        iov.iov_len = worker->recv_buf.size();
-        msghdr msg{};
-        msg.msg_iov = &iov;
-        msg.msg_iovlen = 1;
+    std::cout << "Received " << n << " bytes\n";
 
-        ssize_t n = recvmsg(worker->koma_fd, &msg, 0);
-        if (n <= 0) {
-            break;
-        }
+    const uint8_t* p = worker->recv_buf.data();
 
-        //TODO(mihai) check that this doesn't break / works correctly and refactor a bit once done, cause this function is kinda ugly
-
-        const uint8_t* p = worker->recv_buf.data();
-
-        auto header = grpc_core::Http2FrameHeader::Parse(p);
-        p += 9;
-        grpc_core::SliceBuffer hpack_payload;
-        hpack_payload.Append(grpc_core::Slice::FromCopiedBuffer(p, header.length));
-        p += header.length;
-
-        grpc_metadata_batch metadata;
-        hpack_decode(worker->parser, hpack_payload, false, metadata);
-
-        grpc_core::Http2FrameHeader data_hdr = grpc_core::Http2FrameHeader::Parse(p);
-        p += 9;
-
-        grpc_core::SliceBuffer data_payload;
-        data_payload.Append(grpc_core::Slice::FromCopiedBuffer(p, data_hdr.length));
-
-        auto grpc_hdr = grpc_core::ExtractGrpcHeader(data_payload);
-
-        //TODO(mihai) : see how to dispatch this correctly
-        // how they do it now is: with a grpc_call pointer from a CQ, but we no longer have this
-        // and no grpc_call ptr, so I might need to use a map from method path to actual handler
-        // migh need  to create a KomaDispatcher class for this logic
-
-        std::cout << "Received " << n << " bytes\n";
+    auto header = grpc_core::Http2FrameHeader::Parse(p);
+    // skip anything that isn't a headers frame or is too small to also
+    // contain a DATA frame after it (e.g. bare RST_STREAM = 13 bytes).
+    if (header.type != 0x1 || header.length + 18 > n) {
+        return;
     }
+    p += 9;
+    grpc_core::SliceBuffer hpack_payload;
+    hpack_payload.Append(grpc_core::Slice::FromCopiedBuffer(p, header.length));
+    p += header.length;
+
+    grpc_metadata_batch metadata;
+    hpack_decode(worker->parser, hpack_payload, false, metadata);
+
+    grpc_core::Http2FrameHeader data_hdr = grpc_core::Http2FrameHeader::Parse(p);
+    if (data_hdr.type != 0x0) return;
+    p += 9;
+
+    grpc_core::SliceBuffer data_payload;
+    data_payload.Append(grpc_core::Slice::FromCopiedBuffer(p, data_hdr.length));
+
+    auto grpc_hdr = grpc_core::ExtractGrpcHeader(data_payload);
+
+    //TODO(mihai) : see how to dispatch this correctly
 }
 
 void koma_rx_manager::cleanup(koma_rx_manager::koma_worker& worker) {

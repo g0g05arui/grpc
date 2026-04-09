@@ -25,6 +25,8 @@
 #include <grpcpp/support/status.h>
 
 #include <climits>
+#include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <map>
 #include <memory>
