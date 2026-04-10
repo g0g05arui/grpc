@@ -13,6 +13,7 @@
 #include <iostream>
 #include "absl/random/bit_gen_ref.h"
 #include "absl/status/status.h"
+#include "src/core/koma/koma_dispatcher.h"
 #include "src/core/call/metadata_batch.h"
 #include "src/core/ext/transport/chttp2/transport/frame.h"
 #include "src/core/ext/transport/chttp2/transport/hpack_parser.h"
@@ -245,4 +246,8 @@ void koma_rx_manager::cleanup(koma_rx_manager::koma_worker& worker) {
     if (worker.event_fd >= 0) close(worker.event_fd);
     if (worker.epoll_fd >= 0) close(worker.epoll_fd);
     if (worker.koma_fd >= 0) close(worker.koma_fd);
+}
+
+void koma_rx_manager::set_dispatcher(koma_dispatcher *d){
+  dispatcher = d;
 }

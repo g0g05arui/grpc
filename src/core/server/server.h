@@ -36,6 +36,7 @@
 #include <utility>
 #include <vector>
 
+#include "src/core/koma/koma_dispatcher.h"
 #include "src/core/call/metadata_batch.h"
 #include "src/core/channelz/channelz.h"
 #include "src/core/filter/blackboard.h"
@@ -131,6 +132,7 @@ class Server : public ServerInterface,
                public CppImplOf<Server, grpc_server> {
  public:
   // Filter vtable.
+  //
   static const grpc_channel_filter kServerTopFilter;
 
   // Opaque type used for registered methods.
@@ -272,6 +274,7 @@ class Server : public ServerInterface,
    private:
 
     std::unique_ptr<koma_rx_manager> koma_rx_manager_;
+
     bool use_koma_;
 
     friend class grpc_core::testing::ListenerStateTestPeer;
@@ -425,7 +428,11 @@ class Server : public ServerInterface,
     return compression_options_;
   }
 
+  void set_koma_dispatcher(koma_dispatcher* d) { dispatcher = d; }
+  koma_dispatcher* get_koma_dispatcher() { return dispatcher; }
+
  private:
+  koma_dispatcher* dispatcher = nullptr;
   // note: the grpc_core::Server redundant namespace qualification is
   // required for older gcc versions.
   // TODO(yashykt): eliminate this friend statement as part of your upcoming

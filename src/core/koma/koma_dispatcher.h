@@ -1,6 +1,8 @@
 #pragma once
+#include <cstdint>
 #include <functional>
 #include <string>
+#include "absl/strings/string_view.h"
 
 using koma_handler = std::function<std::string(const uint8_t*, size_t)>;
 

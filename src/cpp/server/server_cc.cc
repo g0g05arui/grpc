@@ -965,6 +965,7 @@ Server::Server(
     }
   }
   server_ = grpc_server_create(&channel_args, nullptr);
+  grpc_core::Server::FromC(server_)->set_koma_dispatcher(this);
   grpc_server_set_config_fetcher(server_, server_config_fetcher);
 
   if (server_rq != nullptr) {

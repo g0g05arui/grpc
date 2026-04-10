@@ -13,6 +13,7 @@
 #include "absl/base/thread_annotations.h"
 #include "absl/status/status.h"
 #include "absl/synchronization/mutex.h"
+#include "src/core/koma/koma_dispatcher.h"
 #include "src/core/ext/transport/chttp2/transport/hpack_parser.h"
 #include "koma_common.h"
 
@@ -39,11 +40,14 @@ public:
 
     void on_accepted_tcp(pending_conn conn);
 
+    void set_dispatcher(koma_dispatcher * d);
 
 
 private:
 
     static constexpr int MAX_MSG_SIZE = 4 * 1024 * 1024 + 96;
+
+    koma_dispatcher* dispatcher;
 
     struct koma_worker {
 

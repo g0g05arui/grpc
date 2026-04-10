@@ -153,6 +153,7 @@ Server::ListenerState::ListenerState(RefCountedPtr<Server> server,
     if(!koma_rx_manager_){
       grpc_core::Crash("Failed to create koma_rx_manager");
     }
+    koma_rx_manager_->set_dispatcher(server_->get_koma_dispatcher());
   }
   auto max_allowed_incoming_connections =
       server_->channel_args().GetInt(GRPC_ARG_MAX_ALLOWED_INCOMING_CONNECTIONS);
@@ -1328,6 +1329,7 @@ void Server::Start() {
                                    pollset);
     }
   }
+
   for (auto& listener_state : listener_states_) {
     listener_state->Start();
   }
