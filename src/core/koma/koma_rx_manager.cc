@@ -161,9 +161,11 @@ void koma_rx_manager::handle_worker_eventfd(koma_rx_manager::koma_worker* worker
         pending.swap(worker->pending_tcp_fds);
     }
 
-    static const uint8_t server_preface[18] = {
+    static const uint8_t server_preface[31] = {
         0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00,  // SETTINGS
         0x00, 0x00, 0x00, 0x04, 0x01, 0x00, 0x00, 0x00, 0x00,  // SETTINGS ACK
+        0x00, 0x00, 0x04, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00,  // WINDOW_UPDATE
+        0x7f, 0xff, 0xff, 0xff,
     };
 
     for (auto& conn : pending) {
@@ -216,8 +218,7 @@ void koma_rx_manager::handle_worker_komafd(koma_rx_manager::koma_worker* worker)
     const uint8_t* p = worker->recv_buf.data();
 
     auto header = grpc_core::Http2FrameHeader::Parse(p);
-    // skip anything that isn't a headers frame or is too small to also
-    // contain a DATA frame after it (e.g. bare RST_STREAM = 13 bytes).
+
     if (header.type != 0x1 || header.length + 18 > n) {
         return;
     }
@@ -237,8 +238,12 @@ void koma_rx_manager::handle_worker_komafd(koma_rx_manager::koma_worker* worker)
     data_payload.Append(grpc_core::Slice::FromCopiedBuffer(p, data_hdr.length));
 
     auto grpc_hdr = grpc_core::ExtractGrpcHeader(data_payload);
+    if (!grpc_hdr.IsOk()) return;
+    absl::Status status = dispatch(worker, msg, p, metadata, data_payload, data_hdr, header);
 
-    //TODO(mihai) : see how to dispatch this correctly
+    if(status != absl::OkStatus()){
+        std::cerr << status.message() << '\n';
+    }
 }
 
 void koma_rx_manager::cleanup(koma_rx_manager::koma_worker& worker) {
@@ -250,4 +255,76 @@ void koma_rx_manager::cleanup(koma_rx_manager::koma_worker& worker) {
 
 void koma_rx_manager::set_dispatcher(koma_dispatcher *d){
   dispatcher = d;
+}
+
+absl::Status koma_rx_manager::dispatch(const koma_worker * worker,
+                                        msghdr& msg,
+                                        const uint8_t *req_buf ,
+                                        const grpc_metadata_batch &metadata,
+                                        grpc_core::SliceBuffer &data_payload,
+                                        grpc_core::Http2FrameHeader & data_hdr,
+                                        grpc_core::Http2FrameHeader & header
+){
+
+    const grpc_core::Slice* path_slice = metadata.get_pointer(grpc_core::HttpPathMetadata());
+    if (path_slice == nullptr) return absl::InternalError("null path slice");
+    absl::string_view path = path_slice->as_string_view();
+
+    // Look up handler
+    if (dispatcher == nullptr) return absl::InternalError("dispatcher is null");
+    koma_handler* handler = dispatcher->find_handler(path);
+    if (handler == nullptr) {
+        return absl::NotFoundError("path not found");
+    }
+    const uint8_t* proto_bytes = req_buf + 5;
+    size_t proto_len = (data_hdr.length >= 5) ? data_hdr.length - 5 : 0;
+
+    std::string response_proto = (*handler)(proto_bytes, proto_len);
+    static const uint8_t content_type[] = {
+        0x88,
+        0x40, 0x0c, 'c','o','n','t','e','n','t','-','t','y','p','e',
+              0x10, 'a','p','p','l','i','c','a','t','i','o','n','/','g','r','p','c',
+    };
+    static const uint8_t status[] = {
+        0x40, 0x0b, 'g','r','p','c','-','s','t','a','t','u','s',
+              0x01, '0',
+    };
+
+    uint32_t resp_size = response_proto.size();
+    uint32_t data_frame_len = 5 + resp_size;
+
+    std::vector<uint8_t> resp(27 + sizeof(content_type) + data_frame_len + sizeof(status));
+    uint8_t* out = resp.data();
+    uint32_t stream = header.stream_id;
+    grpc_core::Http2FrameHeader{sizeof(content_type), 0x1, 0x4, stream}.Serialize(out);
+    out += 9;
+    memcpy(out, content_type, sizeof(content_type));
+    out += sizeof(content_type);
+
+    // DATA frame
+    grpc_core::Http2FrameHeader{data_frame_len, 0x0, 0x0, stream}.Serialize(out);
+    out += 9;
+    out[0] = 0;  // no compression flag
+    out[1] = (resp_size >> 24) & 0xff;
+    out[2] = (resp_size >> 16) & 0xff;
+    out[3] = (resp_size >> 8) & 0xff;
+    out[4] =  resp_size & 0xff;
+    out += 5;
+    memcpy(out, response_proto.data(), resp_size);
+    out += resp_size;
+
+    grpc_core::Http2FrameHeader{sizeof(status), 0x1, 0x5, stream}.Serialize(out);
+    out += 9;
+    memcpy(out, status, sizeof(status));
+
+    iovec resp_iov{};
+    resp_iov.iov_base = resp.data();
+    resp_iov.iov_len = resp.size();
+    msg.msg_iov = &resp_iov;
+    msg.msg_iovlen = 1;
+    ssize_t sent = sendmsg(worker->koma_fd, &msg, 0);
+    if (sent < 0) {
+        return absl::InternalError("koma sendmsg failed");
+    }
+    return absl::OkStatus();
 }

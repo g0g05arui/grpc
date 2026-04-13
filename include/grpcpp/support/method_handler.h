@@ -25,7 +25,6 @@
 #include <grpcpp/support/sync_stream.h>
 
 #include "absl/log/absl_check.h"
-#include "src/core/koma/koma_common.h"
 
 namespace grpc {
 

@@ -34,8 +34,9 @@
 
 #include "absl/log/absl_check.h"
 #include "absl/log/absl_log.h"
-#include "src/core/koma/koma_dispatcher.h"
-#include "src/core/koma/koma_common.h"
+
+#include <string>
+using koma_handler = std::function<std::string(const uint8_t*, size_t)>;
 
 namespace grpc {
 class ServerContextBase;
