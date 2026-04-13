@@ -25,10 +25,7 @@ class koma_rx_manager {
 
 public:
 
-    struct pending_conn{
-        int attach_fd;
-        int write_fd;
-    };
+    using pending_conn = int;
 
     explicit koma_rx_manager(size_t num_threads = std::thread::hardware_concurrency()) : m_num_threads(num_threads){};
     ~koma_rx_manager();

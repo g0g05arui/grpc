@@ -82,8 +82,7 @@ absl::Status koma_rx_manager::start() {
 void koma_rx_manager::on_accepted_tcp(pending_conn conn) {
     absl::MutexLock lock(&m_mu);
     if (m_workers.empty()) {
-        close(conn.attach_fd);
-        close(conn.write_fd);
+        close(conn);
         return;
     }
     koma_worker* worker = m_workers[m_next_worker++ % m_workers.size()].get();
@@ -173,7 +172,7 @@ void koma_rx_manager::handle_worker_eventfd(koma_rx_manager::koma_worker* worker
         char buf[24] = {0};
         ssize_t recvd = 0;
         while (recvd < 24) {
-            ssize_t r = recv(conn.attach_fd, buf + recvd, 24 - recvd, 0);
+            ssize_t r = recv(conn, buf + recvd, 24 - recvd, 0);
             if (r > 0) { recvd += r; continue; }
             if (r < 0 && errno == EAGAIN) continue;
             std::cout << "Preface recv failed after " << recvd << " bytes\n";
@@ -181,22 +180,21 @@ void koma_rx_manager::handle_worker_eventfd(koma_rx_manager::koma_worker* worker
         }
 
         if (recvd == 24) {
-            if (koma_attach(worker->koma_fd, conn.attach_fd) < 0) {
-                std::cout << "koma_attach failed for fd " << conn.attach_fd << '\n';
+            if (koma_attach(worker->koma_fd, conn) < 0) {
+                std::cout << "koma_attach failed for fd " << conn << '\n';
             } else {
-                ssize_t sent = send(conn.write_fd, server_preface, sizeof(server_preface), MSG_NOSIGNAL);
+                ssize_t sent = send(conn, server_preface, sizeof(server_preface), MSG_NOSIGNAL);
                 if (sent < 0) {
-                    std::cout << "Failed to send server preface to fd " << conn.write_fd
+                    std::cout << "Failed to send server preface to fd " << conn
                               << ": " << strerror(errno) << '\n';
                 } else {
-                    std::cout << "Attached tcp fd #" << conn.attach_fd
+                    std::cout << "Attached tcp fd #" << conn
                               << " to worker " << worker->id << '\n';
                 }
             }
         }
 
-        close(conn.attach_fd);
-        close(conn.write_fd);  // TODO(mihai): keep write_fd alive once response sending is implemented
+        close(conn);
     }
 }
 

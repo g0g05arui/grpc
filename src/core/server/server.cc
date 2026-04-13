@@ -211,9 +211,9 @@ void Server::ListenerState::Stop() {
   listener_.reset();
 }
 
-void Server::ListenerState::on_tcp_fd(int attach_fd, int write_fd) {
-  if (use_koma_) { // test
-    koma_rx_manager_->on_accepted_tcp(koma_rx_manager::pending_conn{attach_fd, write_fd});
+void Server::ListenerState::on_tcp_fd(int attach_fd) {
+  if (use_koma()) {
+    koma_rx_manager_->on_accepted_tcp(attach_fd);
   }
 }
 
