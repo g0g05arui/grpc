@@ -13,6 +13,7 @@
 #include "absl/base/thread_annotations.h"
 #include "absl/status/status.h"
 #include "absl/synchronization/mutex.h"
+#include "src/core/ext/transport/chttp2/transport/frame.h"
 #include "src/core/koma/koma_dispatcher.h"
 #include "src/core/ext/transport/chttp2/transport/hpack_parser.h"
 #include "koma_common.h"
@@ -29,7 +30,7 @@ public:
         int write_fd;
     };
 
-    explicit koma_rx_manager(size_t num_threads = NUM_KOMA_SOCKETS) : m_num_threads(num_threads){};
+    explicit koma_rx_manager(size_t num_threads = std::thread::hardware_concurrency()) : m_num_threads(num_threads){};
     ~koma_rx_manager();
 
 
@@ -79,4 +80,13 @@ private:
     size_t m_next_worker ABSL_GUARDED_BY(m_mu) = 0;
     // std::unordered_map<int, int> m_tcp_fd_to_worker;
     absl::Mutex m_mu;
+
+    absl::Status dispatch(const koma_worker * worker,
+                            msghdr& msg,
+                            const uint8_t *req_buf,
+                            const grpc_metadata_batch &metadata,
+                            grpc_core::SliceBuffer &data_payload,
+                            grpc_core::Http2FrameHeader & data_hdr,
+                            grpc_core::Http2FrameHeader & header);
+
 };
