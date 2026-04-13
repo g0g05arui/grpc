@@ -136,7 +136,7 @@ void Server::ListenerState::ConfigFetcherWatcher::StopServing() {
 
 Server::ListenerState::ListenerState(RefCountedPtr<Server> server,
                                      OrphanablePtr<ListenerInterface> l,
-                                     bool use_koma = true)
+                                     bool use_koma = true) // TODO(mihai) add a use_koma option to the public API so I can test both easier without rebuilding
     : server_(std::move(server)),
       memory_quota_(
           server_->channel_args().GetObject<ResourceQuota>()->memory_quota()),
@@ -147,7 +147,6 @@ Server::ListenerState::ListenerState(RefCountedPtr<Server> server,
       listener_(std::move(l)),
       blackboards_(PerCpuOptions().SetMaxShards(16)),
       use_koma_(use_koma) {
-        // TODO(mihai) think about nr of default threads / cores used
   if(use_koma){
     koma_rx_manager_ = std::make_unique<koma_rx_manager>();
     if(!koma_rx_manager_){
