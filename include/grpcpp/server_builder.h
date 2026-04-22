@@ -89,7 +89,7 @@ class ServerBuilder {
  public:
   ServerBuilder();
   virtual ~ServerBuilder();
-
+  ServerBuilder & UseKoma(bool use_koma);
   //////////////////////////////////////////////////////////////////////////////
   // Primary API's
 
@@ -382,6 +382,9 @@ class ServerBuilder {
   virtual ChannelArguments BuildChannelArgs();
 
  private:
+
+  bool use_koma_ = false;
+
   friend class grpc::testing::ServerBuilderPluginTest;
 
   struct UnstartedPassiveListener {

@@ -431,7 +431,12 @@ class Server : public ServerInterface,
   void set_koma_dispatcher(koma_dispatcher* d) { dispatcher = d; }
   koma_dispatcher* get_koma_dispatcher() { return dispatcher; }
 
+  void set_use_koma(bool use_koma){use_koma_ = use_koma;}
+
  private:
+
+  bool use_koma_ = false;
+
   koma_dispatcher* dispatcher = nullptr;
   // note: the grpc_core::Server redundant namespace qualification is
   // required for older gcc versions.

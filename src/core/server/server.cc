@@ -1295,7 +1295,7 @@ void Server::AddListener(OrphanablePtr<ListenerInterface> listener) {
   }
   ListenerInterface* ptr = listener.get();
   listener_states_.emplace_back(
-      MakeRefCounted<ListenerState>(Ref(), std::move(listener)));
+      MakeRefCounted<ListenerState>(Ref(), std::move(listener), use_koma_));
   ptr->SetServerListenerState(listener_states_.back());
 }
 

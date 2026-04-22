@@ -70,6 +70,8 @@ class Server : public ServerInterface, private internal::GrpcLibrary, public kom
     return &it->second;
 
   }
+
+
   /// Block until the server shuts down.
   ///
   /// \warning The server must be either shutting down or some other thread must
@@ -141,6 +143,7 @@ class Server : public ServerInterface, private internal::GrpcLibrary, public kom
   experimental_type experimental() { return experimental_type(this); }
 
  protected:
+  bool use_koma_ = false;
   absl::flat_hash_map<std::string, koma_handler> koma_handlers;
 
   /// Register a service. This call does not take ownership of the service.
@@ -197,7 +200,9 @@ class Server : public ServerInterface, private internal::GrpcLibrary, public kom
              std::unique_ptr<experimental::ServerInterceptorFactoryInterface>>
              interceptor_creators = std::vector<std::unique_ptr<
                  experimental::ServerInterceptorFactoryInterface>>(),
-         experimental::ServerMetricRecorder* server_metric_recorder = nullptr);
+         experimental::ServerMetricRecorder* server_metric_recorder = nullptr,
+         bool use_koma_ = false
+  );
 
   /// Start the server.
   ///

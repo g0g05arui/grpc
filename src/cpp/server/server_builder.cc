@@ -93,7 +93,7 @@ ServerBuilder::ServerBuilder()
     : max_receive_message_size_(INT_MIN),
       max_send_message_size_(INT_MIN),
       sync_server_settings_(SyncServerSettings()),
-      resource_quota_(nullptr) {
+      resource_quota_(nullptr), use_koma_(false) {
   gpr_once_init(&once_init_plugin_list, do_plugin_list_init);
   for (const auto& value : *g_plugin_factory_list) {
     plugins_.emplace_back(value());
@@ -112,6 +112,11 @@ ServerBuilder::~ServerBuilder() {
   if (resource_quota_ != nullptr) {
     grpc_resource_quota_unref(resource_quota_);
   }
+}
+
+ServerBuilder& ServerBuilder::UseKoma(bool use_koma){
+  use_koma_ = use_koma;
+  return *this;
 }
 
 std::unique_ptr<grpc::ServerCompletionQueue> ServerBuilder::AddCompletionQueue(
@@ -414,7 +419,9 @@ std::unique_ptr<grpc::Server> ServerBuilder::BuildAndStart() {
       &args, sync_server_cqs, sync_server_settings_.min_pollers,
       sync_server_settings_.max_pollers, sync_server_settings_.cq_timeout_msec,
       std::move(acceptors_), server_config_fetcher_, resource_quota_,
-      std::move(interceptor_creators_), server_metric_recorder_));
+      std::move(interceptor_creators_), server_metric_recorder_,
+      use_koma_)
+  );
 
   ServerInitializer* initializer = server->initializer();
 
@@ -449,6 +456,7 @@ std::unique_ptr<grpc::Server> ServerBuilder::BuildAndStart() {
     has_frequently_polled_cqs = true;
     auto passive_listener = unstarted_listener.passive_listener.lock();
     auto* core_server = grpc_core::Server::FromC(server->c_server());
+    // core_server
     if (passive_listener != nullptr) {
       auto* creds = unstarted_listener.credentials->c_creds();
       if (creds == nullptr) {

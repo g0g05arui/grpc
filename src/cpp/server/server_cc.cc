@@ -901,7 +901,9 @@ Server::Server(
     std::vector<
         std::unique_ptr<grpc::experimental::ServerInterceptorFactoryInterface>>
         interceptor_creators,
-    experimental::ServerMetricRecorder* server_metric_recorder)
+    experimental::ServerMetricRecorder* server_metric_recorder,
+    bool use_koma
+    )
     : acceptors_(std::move(acceptors)),
       interceptor_creators_(std::move(interceptor_creators)),
       max_receive_message_size_(INT_MIN),
@@ -912,7 +914,9 @@ Server::Server(
       server_(nullptr),
       server_initializer_(new ServerInitializer(this)),
       health_check_service_disabled_(false),
-      server_metric_recorder_(server_metric_recorder) {
+      server_metric_recorder_(server_metric_recorder),
+      use_koma_(use_koma)
+      {
   gpr_once_init(&grpc::g_once_init_callbacks, grpc::InitGlobalCallbacks);
   g_raw_callbacks->UpdateArguments(args);
 
@@ -966,6 +970,8 @@ Server::Server(
   }
   server_ = grpc_server_create(&channel_args, nullptr);
   grpc_core::Server::FromC(server_)->set_koma_dispatcher(this);
+  grpc_core::Server::FromC(server_)->set_use_koma(use_koma_);
+
   grpc_server_set_config_fetcher(server_, server_config_fetcher);
 
   if (server_rq != nullptr) {
