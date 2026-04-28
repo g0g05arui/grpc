@@ -1,10 +1,7 @@
 #pragma once
-#include <cstdint>
-#include <functional>
-#include <string>
-#include "absl/strings/string_view.h"
 
-using koma_handler = std::function<std::string(const uint8_t*, size_t)>;
+#include "absl/strings/string_view.h"
+#include <grpcpp/impl/rpc_service_method.h>
 
 class koma_dispatcher {
 public:

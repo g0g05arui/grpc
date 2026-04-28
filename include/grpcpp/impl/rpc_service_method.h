@@ -30,13 +30,15 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <string>
 #include <vector>
 
 #include "absl/log/absl_check.h"
 #include "absl/log/absl_log.h"
+#include "absl/strings/string_view.h"
 
-#include <string>
-using koma_handler = std::function<std::string(const uint8_t*, size_t)>;
+using koma_payload = std::vector<absl::string_view>;
+using koma_handler = std::function<std::string(const koma_payload&)>;
 
 namespace grpc {
 class ServerContextBase;

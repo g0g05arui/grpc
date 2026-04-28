@@ -6,6 +6,7 @@
 #include <fcntl.h>
 #include <errno.h>
 #include <signal.h>
+#include <algorithm>
 #include <cstring>
 #include <memory>
 #include <functional>
@@ -160,8 +161,9 @@ void koma_rx_manager::handle_worker_eventfd(koma_rx_manager::koma_worker* worker
         pending.swap(worker->pending_tcp_fds);
     }
 
-    static const uint8_t server_preface[31] = {
-        0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00,  // SETTINGS
+    static const uint8_t server_preface[37] = {
+        0x00, 0x00, 0x06, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00,  // SETTINGS
+        0x00, 0x04, 0x00, 0x40, 0x00, 0x00,                    // INITIAL_WINDOW_SIZE = 4MB
         0x00, 0x00, 0x00, 0x04, 0x01, 0x00, 0x00, 0x00, 0x00,  // SETTINGS ACK
         0x00, 0x00, 0x04, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00,  // WINDOW_UPDATE
         0x7f, 0xff, 0xff, 0xff,
@@ -228,16 +230,44 @@ void koma_rx_manager::handle_worker_komafd(koma_rx_manager::koma_worker* worker)
     grpc_metadata_batch metadata;
     hpack_decode(worker->parser, hpack_payload, false, metadata);
 
-    grpc_core::Http2FrameHeader data_hdr = grpc_core::Http2FrameHeader::Parse(p);
-    if (data_hdr.type != 0x0) return;
-    p += 9;
+    const uint8_t* end = worker->recv_buf.data() + n;
+    uint8_t grpc_hdr[5];
+    size_t hdr_len = 0;
+    size_t proto_len = 0;
+    size_t expected_proto_len = 0;
+    koma_payload payload;
 
-    grpc_core::SliceBuffer data_payload;
-    data_payload.Append(grpc_core::Slice::FromCopiedBuffer(p, data_hdr.length));
+    while (p + 9 <= end) {
+        grpc_core::Http2FrameHeader data_hdr = grpc_core::Http2FrameHeader::Parse(p);
+        p += 9;
+        if (p + data_hdr.length > end) return;
 
-    auto grpc_hdr = grpc_core::ExtractGrpcHeader(data_payload);
-    if (!grpc_hdr.IsOk()) return;
-    absl::Status status = dispatch(worker, msg, p, metadata, data_payload, data_hdr, header);
+        if (data_hdr.type == 0x0) {
+            absl::string_view data(reinterpret_cast<const char*>(p), data_hdr.length);
+            size_t off = 0;
+            while (hdr_len < sizeof(grpc_hdr) && off < data.size()) {
+                grpc_hdr[hdr_len++] = data[off++];
+            }
+            if (hdr_len == sizeof(grpc_hdr)) {
+                if (expected_proto_len == 0) {
+                    expected_proto_len = (static_cast<uint32_t>(grpc_hdr[1]) << 24) |
+                                         (static_cast<uint32_t>(grpc_hdr[2]) << 16) |
+                                         (static_cast<uint32_t>(grpc_hdr[3]) << 8) |
+                                         static_cast<uint32_t>(grpc_hdr[4]);
+                }
+                if (off < data.size()) {
+                    size_t len = std::min(data.size() - off, expected_proto_len - proto_len);
+                    payload.push_back(data.substr(off, len));
+                    proto_len += len;
+                }
+            }
+        }
+
+        p += data_hdr.length;
+    }
+
+    if (hdr_len != sizeof(grpc_hdr) || proto_len != expected_proto_len) return;
+    absl::Status status = dispatch(worker, msg, payload, metadata, header);
 
     if(status != absl::OkStatus()){
         std::cerr << status.message() << '\n';
@@ -257,10 +287,8 @@ void koma_rx_manager::set_dispatcher(koma_dispatcher *d){
 
 absl::Status koma_rx_manager::dispatch(const koma_worker * worker,
                                         msghdr& msg,
-                                        const uint8_t *req_buf ,
+                                        const koma_payload &payload,
                                         const grpc_metadata_batch &metadata,
-                                        grpc_core::SliceBuffer &data_payload,
-                                        grpc_core::Http2FrameHeader & data_hdr,
                                         grpc_core::Http2FrameHeader & header
 ){
 
@@ -274,10 +302,7 @@ absl::Status koma_rx_manager::dispatch(const koma_worker * worker,
     if (handler == nullptr) {
         return absl::NotFoundError("path not found");
     }
-    const uint8_t* proto_bytes = req_buf + 5;
-    size_t proto_len = (data_hdr.length >= 5) ? data_hdr.length - 5 : 0;
-
-    std::string response_proto = (*handler)(proto_bytes, proto_len);
+    std::string response_proto = (*handler)(payload);
     static const uint8_t content_type[] = {
         0x88,
         0x40, 0x0c, 'c','o','n','t','e','n','t','-','t','y','p','e',

@@ -24,6 +24,8 @@
 #include <grpcpp/support/byte_buffer.h>
 #include <grpcpp/support/sync_stream.h>
 
+#include <google/protobuf/io/zero_copy_stream_impl.h>
+
 #include "absl/log/absl_check.h"
 
 namespace grpc {
@@ -105,10 +107,27 @@ class RpcMethodHandler : public grpc::internal::MethodHandler {
       ServiceType* service)
       : func_(func), service_(service) {}
   koma_handler to_koma_handler() override {
-    return [this](const uint8_t* body, size_t len) -> std::string {
+    return [this](const koma_payload& body) -> std::string {
         RequestType req;
-        if (!req.ParseFromArray(body, len)) {
-            return "";
+        if (body.size() == 1) {
+            if (!req.ParseFromArray(body[0].data(), body[0].size())) {
+                return "";
+            }
+        } else {
+            std::vector<std::unique_ptr<google::protobuf::io::ArrayInputStream>> arrays;
+            std::vector<google::protobuf::io::ZeroCopyInputStream*> streams;
+            arrays.reserve(body.size());
+            streams.reserve(body.size());
+            for (absl::string_view frag : body) {
+                arrays.emplace_back(std::make_unique<google::protobuf::io::ArrayInputStream>(
+                    frag.data(), frag.size()));
+                streams.push_back(arrays.back().get());
+            }
+            google::protobuf::io::ConcatenatingInputStream input(streams.data(),
+                                                                streams.size());
+            if (!req.ParseFromZeroCopyStream(&input)) {
+                return "";
+            }
         }
         ResponseType resp;
         grpc::ServerContext ctx;

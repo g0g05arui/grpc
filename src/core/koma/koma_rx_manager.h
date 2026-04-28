@@ -80,10 +80,8 @@ private:
 
     absl::Status dispatch(const koma_worker * worker,
                             msghdr& msg,
-                            const uint8_t *req_buf,
+                            const koma_payload &payload,
                             const grpc_metadata_batch &metadata,
-                            grpc_core::SliceBuffer &data_payload,
-                            grpc_core::Http2FrameHeader & data_hdr,
                             grpc_core::Http2FrameHeader & header);
 
 };
