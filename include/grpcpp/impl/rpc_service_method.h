@@ -37,8 +37,17 @@
 #include "absl/log/absl_log.h"
 #include "absl/strings/string_view.h"
 
+namespace google {
+namespace protobuf {
+namespace io {
+class ZeroCopyOutputStream;
+}  // namespace io
+}  // namespace protobuf
+}  // namespace google
+
 using koma_payload = std::vector<absl::string_view>;
-using koma_handler = std::function<std::string(const koma_payload&)>;
+using koma_handler = std::function<bool(
+    const koma_payload&, google::protobuf::io::ZeroCopyOutputStream*)>;
 
 namespace grpc {
 class ServerContextBase;

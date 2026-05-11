@@ -12,6 +12,7 @@
 #include <functional>
 #include <thread>
 #include <iostream>
+#include <google/protobuf/io/zero_copy_stream_impl_lite.h>
 #include "absl/random/bit_gen_ref.h"
 #include "absl/status/status.h"
 #include "src/core/koma/koma_dispatcher.h"
@@ -20,6 +21,29 @@
 #include "src/core/ext/transport/chttp2/transport/hpack_parser.h"
 #include "koma_common.h"
 #include "src/core/util/shared_bit_gen.h"
+
+namespace {
+
+constexpr size_t kMaxDataFramePayload = 16 * 1024;
+
+absl::Status SendIovecs(int fd, msghdr& msg, std::vector<iovec>& iovecs) {
+  if (iovecs.empty()) return absl::OkStatus();
+
+  long raw_iov_max = sysconf(_SC_IOV_MAX);
+  size_t iov_max = raw_iov_max > 0 ? raw_iov_max : 1024;
+
+  for (size_t i = 0; i < iovecs.size();) {
+    const size_t batch = std::min(iovecs.size() - i, iov_max);
+    msg.msg_iov = iovecs.data() + i;
+    msg.msg_iovlen = batch;
+    ssize_t sent = sendmsg(fd, &msg, MSG_NOSIGNAL);
+    if (sent < 0) return absl::InternalError("koma sendmsg failed");
+    i += batch;
+  }
+  return absl::OkStatus();
+}
+
+}  // namespace
 
 static void hpack_decode(grpc_core::HPackParser& parser, grpc_core::SliceBuffer& payload,
                            bool end_stream, grpc_metadata_batch& out) {
@@ -213,8 +237,6 @@ void koma_rx_manager::handle_worker_komafd(koma_rx_manager::koma_worker* worker)
         return;
     }
 
-    std::cout << "Received " << n << " bytes\n";
-
     const uint8_t* p = worker->recv_buf.data();
 
     auto header = grpc_core::Http2FrameHeader::Parse(p);
@@ -250,10 +272,12 @@ void koma_rx_manager::handle_worker_komafd(koma_rx_manager::koma_worker* worker)
             }
             if (hdr_len == sizeof(grpc_hdr)) {
                 if (expected_proto_len == 0) {
-                    expected_proto_len = (static_cast<uint32_t>(grpc_hdr[1]) << 24) |
-                                         (static_cast<uint32_t>(grpc_hdr[2]) << 16) |
-                                         (static_cast<uint32_t>(grpc_hdr[3]) << 8) |
-                                         static_cast<uint32_t>(grpc_hdr[4]);
+                    uint32_t b1 = grpc_hdr[1];
+                    uint32_t b2 = grpc_hdr[2];
+                    uint32_t b3 = grpc_hdr[3];
+                    uint32_t b4 = grpc_hdr[4];
+                    expected_proto_len = (b1 << 24) | (b2 << 16) |
+                                         (b3 << 8) | b4;
                 }
                 if (off < data.size()) {
                     size_t len = std::min(data.size() - off, expected_proto_len - proto_len);
@@ -302,7 +326,6 @@ absl::Status koma_rx_manager::dispatch(const koma_worker * worker,
     if (handler == nullptr) {
         return absl::NotFoundError("path not found");
     }
-    std::string response_proto = (*handler)(payload);
     static const uint8_t content_type[] = {
         0x88,
         0x40, 0x0c, 'c','o','n','t','e','n','t','-','t','y','p','e',
@@ -313,41 +336,57 @@ absl::Status koma_rx_manager::dispatch(const koma_worker * worker,
               0x01, '0',
     };
 
-    uint32_t resp_size = response_proto.size();
-    uint32_t data_frame_len = 5 + resp_size;
-
-    std::vector<uint8_t> resp(27 + sizeof(content_type) + data_frame_len + sizeof(status));
-    uint8_t* out = resp.data();
     uint32_t stream = header.stream_id;
+
+    std::vector<uint8_t> response_headers(grpc_core::kFrameHeaderSize +
+                                          sizeof(content_type));
+    uint8_t* out = response_headers.data();
     grpc_core::Http2FrameHeader{sizeof(content_type), 0x1, 0x4, stream}.Serialize(out);
-    out += 9;
+    out += grpc_core::kFrameHeaderSize;
     memcpy(out, content_type, sizeof(content_type));
-    out += sizeof(content_type);
 
-    // DATA frame
-    grpc_core::Http2FrameHeader{data_frame_len, 0x0, 0x0, stream}.Serialize(out);
-    out += 9;
-    out[0] = 0;  // no compression flag
-    out[1] = (resp_size >> 24) & 0xff;
-    out[2] = (resp_size >> 16) & 0xff;
-    out[3] = (resp_size >> 8) & 0xff;
-    out[4] =  resp_size & 0xff;
-    out += 5;
-    memcpy(out, response_proto.data(), resp_size);
-    out += resp_size;
+    std::string response_message;
+    {
+        google::protobuf::io::StringOutputStream response_stream(&response_message);
+        if (!(*handler)(payload, &response_stream)) {
+            return absl::InternalError("koma handler failed");
+        }
+    }
 
+    std::vector<uint8_t> response_trailers(grpc_core::kFrameHeaderSize +
+                                          sizeof(status));
+    out = response_trailers.data();
     grpc_core::Http2FrameHeader{sizeof(status), 0x1, 0x5, stream}.Serialize(out);
-    out += 9;
+    out += grpc_core::kFrameHeaderSize;
     memcpy(out, status, sizeof(status));
 
-    iovec resp_iov{};
-    resp_iov.iov_base = resp.data();
-    resp_iov.iov_len = resp.size();
-    msg.msg_iov = &resp_iov;
-    msg.msg_iovlen = 1;
-    ssize_t sent = sendmsg(worker->koma_fd, &msg, 0);
-    if (sent < 0) {
-        return absl::InternalError("koma sendmsg failed");
+    std::vector<iovec> iovecs;
+    const size_t data_frame_count =
+        (response_message.size() + kMaxDataFramePayload - 1) /
+        kMaxDataFramePayload;
+    iovecs.reserve(2);
+    iovecs.push_back({response_headers.data(), response_headers.size()});
+    absl::Status send_status = SendIovecs(worker->koma_fd, msg, iovecs);
+    if (!send_status.ok()) return send_status;
+
+    size_t offset = 0;
+    for (size_t i = 0; i < data_frame_count; ++i) {
+        std::array<uint8_t, grpc_core::kFrameHeaderSize> data_header;
+        size_t chunk_size = std::min(kMaxDataFramePayload,
+                                     response_message.size() - offset);
+        uint32_t wire_chunk_size = chunk_size;
+        grpc_core::Http2FrameHeader{wire_chunk_size, 0x0, 0x0, stream}.Serialize(
+            data_header.data());
+
+        iovecs.clear();
+        iovecs.push_back({data_header.data(), data_header.size()});
+        iovecs.push_back({response_message.data() + offset, chunk_size});
+        send_status = SendIovecs(worker->koma_fd, msg, iovecs);
+        if (!send_status.ok()) return send_status;
+        offset += chunk_size;
     }
-    return absl::OkStatus();
+
+    iovecs.clear();
+    iovecs.push_back({response_trailers.data(), response_trailers.size()});
+    return SendIovecs(worker->koma_fd, msg, iovecs);
 }

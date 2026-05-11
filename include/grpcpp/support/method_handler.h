@@ -26,11 +26,36 @@
 
 #include <google/protobuf/io/zero_copy_stream_impl.h>
 
+#include <algorithm>
+#include <cstring>
+#include <limits>
+
 #include "absl/log/absl_check.h"
 
 namespace grpc {
 
 namespace internal {
+
+inline bool WriteKomaResponseBytes(
+    const uint8_t* bytes, size_t len,
+    google::protobuf::io::ZeroCopyOutputStream* output) {
+  const uint8_t* src = bytes;
+  while (len > 0) {
+    void* data = nullptr;
+    int size = 0;
+    if (!output->Next(&data, &size)) return false;
+    size_t writable = size;
+    const size_t n = std::min(len, writable);
+    std::memcpy(data, src, n);
+    if (n < writable) {
+      int backup = writable - n;
+      output->BackUp(backup);
+    }
+    src += n;
+    len -= n;
+  }
+  return true;
+}
 
 // Invoke the method handler, fill in the status, and
 // return whether or not we finished safely (without an exception).
@@ -107,11 +132,12 @@ class RpcMethodHandler : public grpc::internal::MethodHandler {
       ServiceType* service)
       : func_(func), service_(service) {}
   koma_handler to_koma_handler() override {
-    return [this](const koma_payload& body) -> std::string {
+    return [this](const koma_payload& body,
+                  google::protobuf::io::ZeroCopyOutputStream* output) -> bool {
         RequestType req;
         if (body.size() == 1) {
             if (!req.ParseFromArray(body[0].data(), body[0].size())) {
-                return "";
+                return false;
             }
         } else {
             std::vector<std::unique_ptr<google::protobuf::io::ArrayInputStream>> arrays;
@@ -126,13 +152,26 @@ class RpcMethodHandler : public grpc::internal::MethodHandler {
             google::protobuf::io::ConcatenatingInputStream input(streams.data(),
                                                                 streams.size());
             if (!req.ParseFromZeroCopyStream(&input)) {
-                return "";
+                return false;
             }
         }
         ResponseType resp;
         grpc::ServerContext ctx;
-        func_(service_, &ctx, &req, &resp);
-        return resp.SerializeAsString();
+        (void)func_(service_, &ctx, &req, &resp);
+
+        const size_t resp_size = resp.ByteSizeLong();
+        if (resp_size > std::numeric_limits<uint32_t>::max()) {
+          return false;
+        }
+        const uint32_t wire_size = resp_size;
+        uint8_t grpc_hdr[5];
+        grpc_hdr[0] = 0;
+        grpc_hdr[1] = (wire_size >> 24) & 0xff;
+        grpc_hdr[2] = (wire_size >> 16) & 0xff;
+        grpc_hdr[3] = (wire_size >> 8) & 0xff;
+        grpc_hdr[4] = wire_size & 0xff;
+        return WriteKomaResponseBytes(grpc_hdr, sizeof(grpc_hdr), output) &&
+               resp.SerializeToZeroCopyStream(output);
     };
   }
   void RunHandler(const HandlerParameter& param) final {
