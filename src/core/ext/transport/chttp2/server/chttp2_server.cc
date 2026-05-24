@@ -64,6 +64,7 @@
 #include "src/core/lib/iomgr/pollset_set.h"
 #include "src/core/lib/iomgr/resolve_address.h"
 #include "src/core/lib/iomgr/resolved_address.h"
+#include "src/core/lib/iomgr/tcp_posix.h"
 #include "src/core/lib/iomgr/tcp_server.h"
 #include "src/core/lib/iomgr/unix_sockets_posix.h"
 #include "src/core/lib/iomgr/vsock.h"
@@ -117,6 +118,20 @@ Timestamp GetConnectionDeadline(const ChannelArgs& args) {
              Duration::Milliseconds(1),
              args.GetDurationFromIntMillis(GRPC_ARG_SERVER_HANDSHAKE_TIMEOUT_MS)
                  .value_or(Duration::Minutes(2)));
+}
+
+struct KomaFdHandoff {
+  grpc_closure closure;
+  RefCountedPtr<Server::ListenerState> listener_state;
+  int fd = -1;
+};
+
+void OnKomaFdReleased(void* arg, grpc_error_handle /*error*/) {
+  auto* handoff = static_cast<KomaFdHandoff*>(arg);
+  if (handoff->fd >= 0) {
+    handoff->listener_state->on_tcp_fd(handoff->fd);
+  }
+  delete handoff;
 }
 }  // namespace
 
@@ -571,16 +586,18 @@ void NewChttp2ServerListener::OnAccept(
   if (self->listener_state_->use_koma()) {
       const int raw_fd = tcp->vtable->get_fd(tcp);
       if (raw_fd >= 0) {
-          int attach_fd = dup(raw_fd);
-          if (attach_fd >= 0) {
-            // need this because otherwise it would call shutdown on the connection
-            // quick-fix though maybe should find a better solution
-            (void)endpoint.release();
-              self->listener_state_->on_tcp_fd(attach_fd);
-          }
+          auto* handoff = new KomaFdHandoff;
+          handoff->listener_state = self->listener_state_;
+          GRPC_CLOSURE_INIT(&handoff->closure, OnKomaFdReleased, handoff,
+                            grpc_schedule_on_exec_ctx);
+          grpc_tcp_destroy_and_release_fd(endpoint.release(), &handoff->fd,
+                                          &handoff->closure);
       }
       // release the connection quota and return — do NOT create ActiveConnection
       self->listener_state_->connection_quota()->ReleaseConnections(1);
+      if (self->tcp_server_ != nullptr) {
+        grpc_tcp_server_unref(self->tcp_server_);
+      }
       return;
   }
   // normal path below ...

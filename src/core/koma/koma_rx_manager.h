@@ -9,6 +9,8 @@
 #include <vector>
 #include <atomic>
 #include <deque>
+#include <condition_variable>
+#include <mutex>
 #include <sys/socket.h>
 #include "absl/base/thread_annotations.h"
 #include "absl/status/status.h"
@@ -27,7 +29,11 @@ public:
 
     using pending_conn = int;
 
-    explicit koma_rx_manager(size_t num_threads = std::thread::hardware_concurrency()) : m_num_threads(num_threads){};
+    explicit koma_rx_manager(size_t num_threads = 0)
+        : m_num_threads(num_threads == 0 ? std::thread::hardware_concurrency()
+                                         : num_threads) {
+        if (m_num_threads < NUM_KOMA_SOCKETS) m_num_threads = NUM_KOMA_SOCKETS;
+    };
     ~koma_rx_manager();
 
 
@@ -60,6 +66,11 @@ private:
         absl::Mutex pending_mu;
         std::deque<pending_conn> pending_tcp_fds ABSL_GUARDED_BY(pending_mu);
         std::thread thread;
+
+        std::mutex startup_mu;
+        std::condition_variable startup_cv;
+        bool startup_complete = false;
+        absl::Status startup_status;
 
         std::array<uint8_t, MAX_MSG_SIZE> recv_buf;
         grpc_core::HPackParser parser;

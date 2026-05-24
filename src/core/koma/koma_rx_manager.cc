@@ -12,6 +12,7 @@
 #include <functional>
 #include <thread>
 #include <iostream>
+#include <utility>
 #include <google/protobuf/io/zero_copy_stream_impl_lite.h>
 #include "absl/random/bit_gen_ref.h"
 #include "absl/status/status.h"
@@ -79,6 +80,19 @@ absl::Status koma_rx_manager::start() {
     if(!m_workers.empty()){
         return absl::Status(absl::StatusCode::kAlreadyExists, "already started");
     }
+    auto stop_started_workers = [this]() {
+        for (auto& worker : m_workers) {
+            worker->stopped = true;
+            const uint64_t one = 1;
+            (void)write(worker->event_fd, &one, sizeof(one));
+        }
+        for (auto& worker : m_workers) {
+            if (worker->thread.joinable()) worker->thread.join();
+            cleanup(*worker);
+        }
+        m_workers.clear();
+    };
+
     m_workers.reserve(m_num_threads);
     for(size_t i = 0; i < m_num_threads; ++i){
         auto worker = std::make_unique<koma_worker>();
@@ -86,6 +100,7 @@ absl::Status koma_rx_manager::start() {
         worker->koma_fd = koma_init();
 
         if(worker->koma_fd < 0){
+            stop_started_workers();
             return absl::InternalError("koma init failed");
         }
         worker->epoll_fd = epoll_create1(0);
@@ -93,6 +108,7 @@ absl::Status koma_rx_manager::start() {
 
         if(worker->epoll_fd < 0 || worker->event_fd < 0){
             cleanup(*worker);
+            stop_started_workers();
             return absl::InternalError("epoll or eventfd create failed");
         }
         int flags = fcntl(worker->koma_fd, F_GETFL, 0);
@@ -100,6 +116,18 @@ absl::Status koma_rx_manager::start() {
             (void)fcntl(worker->koma_fd, F_SETFL, flags | O_NONBLOCK);
         }
         worker->thread = std::thread(&koma_rx_manager::worker_loop, this, worker.get());
+        {
+            std::unique_lock<std::mutex> startup_lock(worker->startup_mu);
+            worker->startup_cv.wait(startup_lock, [&worker] {
+                return worker->startup_complete;
+            });
+        }
+        if (!worker->startup_status.ok()) {
+            if (worker->thread.joinable()) worker->thread.join();
+            cleanup(*worker);
+            stop_started_workers();
+            return worker->startup_status;
+        }
         m_workers.emplace_back(std::move(worker));
     }
     return absl::OkStatus();
@@ -136,19 +164,32 @@ void koma_rx_manager::shutdown() {
 void koma_rx_manager::worker_loop(koma_rx_manager::koma_worker* worker) {
     std::cout << "Started worker Loop for " << worker->id << '\n';
 
+    auto complete_startup = [worker](absl::Status status) {
+        {
+            std::lock_guard<std::mutex> lock(worker->startup_mu);
+            worker->startup_status = std::move(status);
+            worker->startup_complete = true;
+        }
+        worker->startup_cv.notify_one();
+    };
+
     epoll_event ev{};
     ev.events = EPOLLIN | EPOLLERR;
     ev.data.fd = worker->event_fd;
     if (epoll_ctl(worker->epoll_fd, EPOLL_CTL_ADD, worker->event_fd, &ev) < 0) {
         std::cout << "Failed to add eventfd to epoll for worker " << worker->id << '\n';
+        complete_startup(absl::InternalError("failed to add eventfd to epoll"));
         return;
     }
 
     ev.data.fd = worker->koma_fd;
     if (epoll_ctl(worker->epoll_fd, EPOLL_CTL_ADD, worker->koma_fd, &ev) < 0) {
         std::cout << "Failed to add komafd to epoll for worker " << worker->id << '\n';
+        complete_startup(absl::InternalError("failed to add komafd to epoll"));
         return;
     }
+
+    complete_startup(absl::OkStatus());
 
     epoll_event events[8];
     while (!worker->stopped) {
