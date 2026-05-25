@@ -234,7 +234,7 @@ void koma_rx_manager::handle_worker_eventfd(koma_rx_manager::koma_worker* worker
         0x7f, 0xff, 0xff, 0xff,
     };
 
-    for (auto& conn : pending) {
+    for (auto conn : pending) {
         // read preface
         char buf[24] = {0};
         ssize_t recvd = 0;
@@ -258,10 +258,12 @@ void koma_rx_manager::handle_worker_eventfd(koma_rx_manager::koma_worker* worker
                     std::cout << "Attached tcp fd #" << conn
                               << " to worker " << worker->id << '\n';
                 }
+                worker->attached_tcp_fds.push_back(conn);
+                conn = -1;
             }
         }
 
-        close(conn);
+        if (conn >= 0) close(conn);
     }
 }
 
@@ -344,6 +346,10 @@ void koma_rx_manager::cleanup(koma_rx_manager::koma_worker& worker) {
     if (worker.event_fd >= 0) close(worker.event_fd);
     if (worker.epoll_fd >= 0) close(worker.epoll_fd);
     if (worker.koma_fd >= 0) close(worker.koma_fd);
+    for (int fd : worker.attached_tcp_fds) {
+        if (fd >= 0) close(fd);
+    }
+    worker.attached_tcp_fds.clear();
 }
 
 void koma_rx_manager::set_dispatcher(koma_dispatcher *d){

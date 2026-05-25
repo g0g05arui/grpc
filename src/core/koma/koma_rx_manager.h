@@ -74,6 +74,7 @@ private:
 
         std::array<uint8_t, MAX_MSG_SIZE> recv_buf;
         grpc_core::HPackParser parser;
+        std::vector<int> attached_tcp_fds;
     };
 
     void worker_loop(koma_worker* worker);

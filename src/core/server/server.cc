@@ -148,7 +148,7 @@ Server::ListenerState::ListenerState(RefCountedPtr<Server> server,
       blackboards_(PerCpuOptions().SetMaxShards(16)),
       use_koma_(use_koma) {
   if(use_koma){
-    koma_rx_manager_ = std::make_unique<koma_rx_manager>();
+    koma_rx_manager_ = std::make_unique<koma_rx_manager>(NUM_KOMA_SOCKETS);
     if(!koma_rx_manager_){
       grpc_core::Crash("Failed to create koma_rx_manager");
     }
