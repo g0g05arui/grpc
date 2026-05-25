@@ -212,6 +212,8 @@ void koma_rx_manager::handle_worker_events(koma_rx_manager::koma_worker* worker,
             handle_worker_eventfd(worker);
         } else if (fd == worker->koma_fd) {
             handle_worker_komafd(worker);
+        } else {
+            close_attached_tcp_fd(worker, fd);
         }
     }
 }
@@ -250,21 +252,45 @@ void koma_rx_manager::handle_worker_eventfd(koma_rx_manager::koma_worker* worker
             if (koma_attach(worker->koma_fd, conn) < 0) {
                 std::cout << "koma_attach failed for fd " << conn << '\n';
             } else {
+                epoll_event ev{};
+                ev.events = EPOLLERR | EPOLLHUP | EPOLLRDHUP;
+                ev.data.fd = conn;
+                if (epoll_ctl(worker->epoll_fd, EPOLL_CTL_ADD, conn, &ev) < 0) {
+                    std::cout << "Failed to watch attached tcp fd " << conn
+                              << ": " << strerror(errno) << '\n';
+                    close(conn);
+                    conn = -1;
+                    continue;
+                }
+
                 ssize_t sent = send(conn, server_preface, sizeof(server_preface), MSG_NOSIGNAL);
                 if (sent < 0) {
                     std::cout << "Failed to send server preface to fd " << conn
                               << ": " << strerror(errno) << '\n';
+                    close_attached_tcp_fd(worker, conn);
+                    conn = -1;
                 } else {
                     std::cout << "Attached tcp fd #" << conn
                               << " to worker " << worker->id << '\n';
+                    worker->attached_tcp_fds.push_back(conn);
+                    conn = -1;
                 }
-                worker->attached_tcp_fds.push_back(conn);
-                conn = -1;
             }
         }
 
         if (conn >= 0) close(conn);
     }
+}
+
+void koma_rx_manager::close_attached_tcp_fd(koma_rx_manager::koma_worker* worker,
+                                            int fd) {
+    (void)epoll_ctl(worker->epoll_fd, EPOLL_CTL_DEL, fd, nullptr);
+    auto it = std::find(worker->attached_tcp_fds.begin(),
+                        worker->attached_tcp_fds.end(), fd);
+    if (it != worker->attached_tcp_fds.end()) {
+        worker->attached_tcp_fds.erase(it);
+    }
+    close(fd);
 }
 
 void koma_rx_manager::handle_worker_komafd(koma_rx_manager::koma_worker* worker) {

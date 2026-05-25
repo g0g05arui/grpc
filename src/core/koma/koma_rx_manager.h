@@ -81,6 +81,7 @@ private:
     void handle_worker_events(koma_worker* worker, const struct epoll_event* events, int nfds);
     void handle_worker_eventfd(koma_worker* worker);
     void handle_worker_komafd(koma_worker* worker);
+    void close_attached_tcp_fd(koma_worker* worker, int fd);
 
     void cleanup(koma_worker& worker);
 
