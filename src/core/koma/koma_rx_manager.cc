@@ -99,6 +99,13 @@ absl::Status koma_rx_manager::start() {
         worker->id = i;
         worker->koma_fd = koma_init();
 
+        const size_t max_data_frame_count =
+            (MAX_MSG_SIZE + kMaxDataFramePayload - 1) / kMaxDataFramePayload;
+        worker->payload.reserve(max_data_frame_count);
+        worker->response_message.reserve(MAX_MSG_SIZE);
+        worker->data_headers.reserve(max_data_frame_count);
+        worker->send_iovecs.reserve(2 + max_data_frame_count * 2);
+
         if(worker->koma_fd < 0){
             stop_started_workers();
             return absl::InternalError("koma init failed");
@@ -314,19 +321,19 @@ void koma_rx_manager::handle_worker_komafd(koma_rx_manager::koma_worker* worker)
         return;
     }
     p += 9;
-    grpc_core::SliceBuffer hpack_payload;
-    hpack_payload.Append(grpc_core::Slice::FromCopiedBuffer(p, header.length));
+    worker->metadata.Clear();
+    worker->hpack_payload.Clear();
+    worker->hpack_payload.Append(grpc_core::Slice::FromStaticBuffer(p, header.length));
     p += header.length;
 
-    grpc_metadata_batch metadata;
-    hpack_decode(worker->parser, hpack_payload, false, metadata);
+    hpack_decode(worker->parser, worker->hpack_payload, false, worker->metadata);
 
     const uint8_t* end = worker->recv_buf.data() + n;
     uint8_t grpc_hdr[5];
     size_t hdr_len = 0;
     size_t proto_len = 0;
     size_t expected_proto_len = 0;
-    koma_payload payload;
+    worker->payload.clear();
 
     while (p + 9 <= end) {
         grpc_core::Http2FrameHeader data_hdr = grpc_core::Http2FrameHeader::Parse(p);
@@ -350,7 +357,7 @@ void koma_rx_manager::handle_worker_komafd(koma_rx_manager::koma_worker* worker)
                 }
                 if (off < data.size()) {
                     size_t len = std::min(data.size() - off, expected_proto_len - proto_len);
-                    payload.push_back(data.substr(off, len));
+                    worker->payload.push_back(data.substr(off, len));
                     proto_len += len;
                 }
             }
@@ -360,7 +367,7 @@ void koma_rx_manager::handle_worker_komafd(koma_rx_manager::koma_worker* worker)
     }
 
     if (hdr_len != sizeof(grpc_hdr) || proto_len != expected_proto_len) return;
-    absl::Status status = dispatch(worker, msg, payload, metadata, header);
+    absl::Status status = dispatch(worker, msg, worker->payload, worker->metadata, header);
 
     if(status != absl::OkStatus()){
         std::cerr << status.message() << '\n';
@@ -382,7 +389,7 @@ void koma_rx_manager::set_dispatcher(koma_dispatcher *d){
   dispatcher = d;
 }
 
-absl::Status koma_rx_manager::dispatch(const koma_worker * worker,
+absl::Status koma_rx_manager::dispatch(koma_worker * worker,
                                         msghdr& msg,
                                         const koma_payload &payload,
                                         const grpc_metadata_batch &metadata,
@@ -411,14 +418,15 @@ absl::Status koma_rx_manager::dispatch(const koma_worker * worker,
 
     uint32_t stream = header.stream_id;
 
-    std::vector<uint8_t> response_headers(grpc_core::kFrameHeaderSize +
-                                          sizeof(content_type));
+    std::array<uint8_t, grpc_core::kFrameHeaderSize + sizeof(content_type)>
+        response_headers;
     uint8_t* out = response_headers.data();
     grpc_core::Http2FrameHeader{sizeof(content_type), 0x1, 0x4, stream}.Serialize(out);
     out += grpc_core::kFrameHeaderSize;
     memcpy(out, content_type, sizeof(content_type));
 
-    std::string response_message;
+    std::string& response_message = worker->response_message;
+    response_message.clear();
     {
         google::protobuf::io::StringOutputStream response_stream(&response_message);
         if (!(*handler)(payload, &response_stream)) {
@@ -426,20 +434,22 @@ absl::Status koma_rx_manager::dispatch(const koma_worker * worker,
         }
     }
 
-    std::vector<uint8_t> response_trailers(grpc_core::kFrameHeaderSize +
-                                          sizeof(status));
+    std::array<uint8_t, grpc_core::kFrameHeaderSize + sizeof(status)>
+        response_trailers;
     out = response_trailers.data();
     grpc_core::Http2FrameHeader{sizeof(status), 0x1, 0x5, stream}.Serialize(out);
     out += grpc_core::kFrameHeaderSize;
     memcpy(out, status, sizeof(status));
 
-    std::vector<iovec> iovecs;
     const size_t data_frame_count =
         (response_message.size() + kMaxDataFramePayload - 1) /
         kMaxDataFramePayload;
-    std::vector<std::array<uint8_t, grpc_core::kFrameHeaderSize>> data_headers(
-        data_frame_count);
-    iovecs.reserve(2 + data_frame_count * 2);
+    std::vector<std::array<uint8_t, grpc_core::kFrameHeaderSize>>& data_headers =
+        worker->data_headers;
+    data_headers.resize(data_frame_count);
+
+    std::vector<iovec>& iovecs = worker->send_iovecs;
+    iovecs.clear();
     iovecs.push_back({response_headers.data(), response_headers.size()});
 
     size_t offset = 0;

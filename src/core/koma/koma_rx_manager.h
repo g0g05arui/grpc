@@ -18,6 +18,7 @@
 #include "src/core/ext/transport/chttp2/transport/frame.h"
 #include "src/core/koma/koma_dispatcher.h"
 #include "src/core/ext/transport/chttp2/transport/hpack_parser.h"
+#include "src/core/lib/slice/slice_buffer.h"
 #include "koma_common.h"
 
 struct epoll_event;
@@ -74,6 +75,12 @@ private:
 
         std::array<uint8_t, MAX_MSG_SIZE> recv_buf;
         grpc_core::HPackParser parser;
+        grpc_core::SliceBuffer hpack_payload;
+        grpc_metadata_batch metadata;
+        koma_payload payload;
+        std::string response_message;
+        std::vector<std::array<uint8_t, grpc_core::kFrameHeaderSize>> data_headers;
+        std::vector<iovec> send_iovecs;
         std::vector<int> attached_tcp_fds;
     };
 
@@ -91,7 +98,7 @@ private:
     // std::unordered_map<int, int> m_tcp_fd_to_worker;
     absl::Mutex m_mu;
 
-    absl::Status dispatch(const koma_worker * worker,
+    absl::Status dispatch(koma_worker * worker,
                             msghdr& msg,
                             const koma_payload &payload,
                             const grpc_metadata_batch &metadata,
