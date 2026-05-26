@@ -437,29 +437,24 @@ absl::Status koma_rx_manager::dispatch(const koma_worker * worker,
     const size_t data_frame_count =
         (response_message.size() + kMaxDataFramePayload - 1) /
         kMaxDataFramePayload;
-    iovecs.reserve(2);
+    std::vector<std::array<uint8_t, grpc_core::kFrameHeaderSize>> data_headers(
+        data_frame_count);
+    iovecs.reserve(2 + data_frame_count * 2);
     iovecs.push_back({response_headers.data(), response_headers.size()});
-    absl::Status send_status = SendIovecs(worker->koma_fd, msg, iovecs);
-    if (!send_status.ok()) return send_status;
 
     size_t offset = 0;
     for (size_t i = 0; i < data_frame_count; ++i) {
-        std::array<uint8_t, grpc_core::kFrameHeaderSize> data_header;
         size_t chunk_size = std::min(kMaxDataFramePayload,
                                      response_message.size() - offset);
         uint32_t wire_chunk_size = chunk_size;
         grpc_core::Http2FrameHeader{wire_chunk_size, 0x0, 0x0, stream}.Serialize(
-            data_header.data());
+            data_headers[i].data());
 
-        iovecs.clear();
-        iovecs.push_back({data_header.data(), data_header.size()});
+        iovecs.push_back({data_headers[i].data(), data_headers[i].size()});
         iovecs.push_back({response_message.data() + offset, chunk_size});
-        send_status = SendIovecs(worker->koma_fd, msg, iovecs);
-        if (!send_status.ok()) return send_status;
         offset += chunk_size;
     }
 
-    iovecs.clear();
     iovecs.push_back({response_trailers.data(), response_trailers.size()});
     return SendIovecs(worker->koma_fd, msg, iovecs);
 }
