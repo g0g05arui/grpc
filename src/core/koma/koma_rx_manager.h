@@ -16,7 +16,7 @@
 #include "absl/status/status.h"
 #include "absl/synchronization/mutex.h"
 #include "src/core/ext/transport/chttp2/transport/frame.h"
-#include "src/core/koma/koma_dispatcher.h"
+#include <grpcpp/koma_dispatcher.h>
 #include "src/core/ext/transport/chttp2/transport/hpack_parser.h"
 #include "src/core/lib/slice/slice_buffer.h"
 #include "koma_common.h"

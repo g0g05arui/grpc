@@ -46,7 +46,7 @@
 
 struct grpc_server;
 
-#include "src/core/koma/koma_dispatcher.h"
+#include <grpcpp/koma_dispatcher.h>
 
 namespace grpc {
 class AsyncGenericService;

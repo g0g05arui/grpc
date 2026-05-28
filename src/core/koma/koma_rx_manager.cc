@@ -16,7 +16,7 @@
 #include <google/protobuf/io/zero_copy_stream_impl_lite.h>
 #include "absl/random/bit_gen_ref.h"
 #include "absl/status/status.h"
-#include "src/core/koma/koma_dispatcher.h"
+#include <grpcpp/koma_dispatcher.h>
 #include "src/core/call/metadata_batch.h"
 #include "src/core/ext/transport/chttp2/transport/frame.h"
 #include "src/core/ext/transport/chttp2/transport/hpack_parser.h"

@@ -5144,6 +5144,7 @@ foreach(_hdr
   include/grpcpp/security/tls_certificate_verifier.h
   include/grpcpp/security/tls_credentials_options.h
   include/grpcpp/security/tls_crl_provider.h
+  include/grpcpp/koma_dispatcher.h
   include/grpcpp/server.h
   include/grpcpp/server_builder.h
   include/grpcpp/server_context.h
@@ -5885,6 +5886,7 @@ foreach(_hdr
   include/grpcpp/security/tls_certificate_verifier.h
   include/grpcpp/security/tls_credentials_options.h
   include/grpcpp/security/tls_crl_provider.h
+  include/grpcpp/koma_dispatcher.h
   include/grpcpp/server.h
   include/grpcpp/server_builder.h
   include/grpcpp/server_context.h

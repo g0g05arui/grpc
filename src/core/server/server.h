@@ -36,7 +36,7 @@
 #include <utility>
 #include <vector>
 
-#include "src/core/koma/koma_dispatcher.h"
+#include <grpcpp/koma_dispatcher.h>
 #include "src/core/call/metadata_batch.h"
 #include "src/core/channelz/channelz.h"
 #include "src/core/filter/blackboard.h"
