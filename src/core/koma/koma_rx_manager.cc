@@ -102,7 +102,7 @@ absl::Status koma_rx_manager::start() {
         const size_t max_data_frame_count =
             (MAX_MSG_SIZE + kMaxDataFramePayload - 1) / kMaxDataFramePayload;
         worker->payload.reserve(max_data_frame_count);
-        worker->response_message.reserve(MAX_MSG_SIZE);
+     
         worker->data_headers.reserve(max_data_frame_count);
         worker->send_iovecs.reserve(2 + max_data_frame_count * 2);
 
@@ -426,12 +426,9 @@ absl::Status koma_rx_manager::dispatch(koma_worker * worker,
     memcpy(out, content_type, sizeof(content_type));
 
     std::string& response_message = worker->response_message;
-    response_message.clear();
-    {
-        google::protobuf::io::StringOutputStream response_stream(&response_message);
-        if (!(*handler)(payload, &response_stream)) {
-            return absl::InternalError("koma handler failed");
-        }
+   
+    if (!(*handler)(payload, &response_message)) {
+        return absl::InternalError("koma handler failed");
     }
 
     std::array<uint8_t, grpc_core::kFrameHeaderSize + sizeof(status)>

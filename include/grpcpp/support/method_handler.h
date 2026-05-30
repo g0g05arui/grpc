@@ -132,8 +132,7 @@ class RpcMethodHandler : public grpc::internal::MethodHandler {
       ServiceType* service)
       : func_(func), service_(service) {}
   koma_handler to_koma_handler() override {
-    return [this](const koma_payload& body,
-                  google::protobuf::io::ZeroCopyOutputStream* output) -> bool {
+    return [this](const koma_payload& body, std::string* out) -> bool {
         RequestType req;
         if (body.size() == 1) {
             if (!req.ParseFromArray(body[0].data(), body[0].size())) {
@@ -164,14 +163,15 @@ class RpcMethodHandler : public grpc::internal::MethodHandler {
           return false;
         }
         const uint32_t wire_size = resp_size;
-        uint8_t grpc_hdr[5];
-        grpc_hdr[0] = 0;
-        grpc_hdr[1] = (wire_size >> 24) & 0xff;
-        grpc_hdr[2] = (wire_size >> 16) & 0xff;
-        grpc_hdr[3] = (wire_size >> 8) & 0xff;
-        grpc_hdr[4] = wire_size & 0xff;
-        return WriteKomaResponseBytes(grpc_hdr, sizeof(grpc_hdr), output) &&
-               resp.SerializeToZeroCopyStream(output);
+
+        out->resize(5 + resp_size);
+        uint8_t* p = reinterpret_cast<uint8_t*>(out->data());
+        p[0] = 0;
+        p[1] = (wire_size >> 24) & 0xff;
+        p[2] = (wire_size >> 16) & 0xff;
+        p[3] = (wire_size >> 8) & 0xff;
+        p[4] = wire_size & 0xff;
+        return resp.SerializeToArray(p + 5, static_cast<int>(resp_size));
     };
   }
   void RunHandler(const HandlerParameter& param) final {

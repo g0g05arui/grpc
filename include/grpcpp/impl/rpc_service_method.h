@@ -47,7 +47,7 @@ class ZeroCopyOutputStream;
 
 using koma_payload = std::vector<absl::string_view>;
 using koma_handler = std::function<bool(
-    const koma_payload&, google::protobuf::io::ZeroCopyOutputStream*)>;
+    const koma_payload&, std::string*)>;
 
 namespace grpc {
 class ServerContextBase;
