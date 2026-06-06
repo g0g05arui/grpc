@@ -27,6 +27,28 @@ namespace {
 
 constexpr size_t kMaxDataFramePayload = 16 * 1024;
 
+constexpr uint8_t kKomaContentTypeHeaders[] = {
+    0x88,
+    0x40, 0x0c, 'c','o','n','t','e','n','t','-','t','y','p','e',
+          0x10, 'a','p','p','l','i','c','a','t','i','o','n','/','g','r','p','c',
+};
+
+constexpr uint8_t kKomaOkTrailers[] = {
+    0x40, 0x0b, 'g','r','p','c','-','s','t','a','t','u','s',
+          0x01, '0',
+};
+
+constexpr uint8_t kKomaDeadlineExceededTrailers[] = {
+    0x40, 0x0b, 'g','r','p','c','-','s','t','a','t','u','s',
+          0x01, '4',
+    0x40, 0x0c, 'g','r','p','c','-','m','e','s','s','a','g','e',
+          0x11, 'D','e','a','d','l','i','n','e',' ','E','x','c','e','e','d','e','d',
+};
+
+bool IsExpired(grpc_core::Timestamp deadline) {
+  return deadline <= grpc_core::Timestamp::Now();
+}
+
 absl::Status SendIovecs(int fd, msghdr& msg, std::vector<iovec>& iovecs) {
   if (iovecs.empty()) return absl::OkStatus();
 
@@ -42,6 +64,30 @@ absl::Status SendIovecs(int fd, msghdr& msg, std::vector<iovec>& iovecs) {
     i += batch;
   }
   return absl::OkStatus();
+}
+
+template <size_t N>
+absl::Status SendTrailersOnlyResponse(int fd, msghdr& msg, uint32_t stream,
+                                      const uint8_t (&trailers)[N],
+                                      std::vector<iovec>& iovecs) {
+  std::array<uint8_t, grpc_core::kFrameHeaderSize + sizeof(kKomaContentTypeHeaders)>
+      response_headers;
+  uint8_t* out = response_headers.data();
+  grpc_core::Http2FrameHeader{sizeof(kKomaContentTypeHeaders), 0x1, 0x4, stream}
+      .Serialize(out);
+  out += grpc_core::kFrameHeaderSize;
+  memcpy(out, kKomaContentTypeHeaders, sizeof(kKomaContentTypeHeaders));
+
+  std::array<uint8_t, grpc_core::kFrameHeaderSize + N> response_trailers;
+  out = response_trailers.data();
+  grpc_core::Http2FrameHeader{N, 0x1, 0x5, stream}.Serialize(out);
+  out += grpc_core::kFrameHeaderSize;
+  memcpy(out, trailers, N);
+
+  iovecs.clear();
+  iovecs.push_back({response_headers.data(), response_headers.size()});
+  iovecs.push_back({response_trailers.data(), response_trailers.size()});
+  return SendIovecs(fd, msg, iovecs);
 }
 
 }  // namespace
@@ -328,6 +374,19 @@ void koma_rx_manager::handle_worker_komafd(koma_rx_manager::koma_worker* worker)
 
     hpack_decode(worker->parser, worker->hpack_payload, false, worker->metadata);
 
+    grpc_core::Timestamp deadline =
+        worker->metadata.get(grpc_core::GrpcTimeoutMetadata())
+            .value_or(grpc_core::Timestamp::InfFuture());
+    if (IsExpired(deadline)) {
+        absl::Status status = SendTrailersOnlyResponse(
+            worker->koma_fd, msg, header.stream_id, kKomaDeadlineExceededTrailers,
+            worker->send_iovecs);
+        if (status != absl::OkStatus()) {
+            std::cerr << status.message() << '\n';
+        }
+        return;
+    }
+
     const uint8_t* end = worker->recv_buf.data() + n;
     uint8_t grpc_hdr[5];
     size_t hdr_len = 0;
@@ -367,7 +426,8 @@ void koma_rx_manager::handle_worker_komafd(koma_rx_manager::koma_worker* worker)
     }
 
     if (hdr_len != sizeof(grpc_hdr) || proto_len != expected_proto_len) return;
-    absl::Status status = dispatch(worker, msg, worker->payload, worker->metadata, header);
+    absl::Status status = dispatch(worker, msg, worker->payload, worker->metadata,
+                                   deadline, header);
 
     if(status != absl::OkStatus()){
         std::cerr << status.message() << '\n';
@@ -393,6 +453,7 @@ absl::Status koma_rx_manager::dispatch(koma_worker * worker,
                                         msghdr& msg,
                                         const koma_payload &payload,
                                         const grpc_metadata_batch &metadata,
+                                        grpc_core::Timestamp deadline,
                                         grpc_core::Http2FrameHeader & header
 ){
 
@@ -406,24 +467,14 @@ absl::Status koma_rx_manager::dispatch(koma_worker * worker,
     if (handler == nullptr) {
         return absl::NotFoundError("path not found");
     }
-    static const uint8_t content_type[] = {
-        0x88,
-        0x40, 0x0c, 'c','o','n','t','e','n','t','-','t','y','p','e',
-              0x10, 'a','p','p','l','i','c','a','t','i','o','n','/','g','r','p','c',
-    };
-    static const uint8_t status[] = {
-        0x40, 0x0b, 'g','r','p','c','-','s','t','a','t','u','s',
-              0x01, '0',
-    };
-
     uint32_t stream = header.stream_id;
 
-    std::array<uint8_t, grpc_core::kFrameHeaderSize + sizeof(content_type)>
+    std::array<uint8_t, grpc_core::kFrameHeaderSize + sizeof(kKomaContentTypeHeaders)>
         response_headers;
     uint8_t* out = response_headers.data();
-    grpc_core::Http2FrameHeader{sizeof(content_type), 0x1, 0x4, stream}.Serialize(out);
+    grpc_core::Http2FrameHeader{sizeof(kKomaContentTypeHeaders), 0x1, 0x4, stream}.Serialize(out);
     out += grpc_core::kFrameHeaderSize;
-    memcpy(out, content_type, sizeof(content_type));
+    memcpy(out, kKomaContentTypeHeaders, sizeof(kKomaContentTypeHeaders));
 
     std::string& response_message = worker->response_message;
    
@@ -431,12 +482,18 @@ absl::Status koma_rx_manager::dispatch(koma_worker * worker,
         return absl::InternalError("koma handler failed");
     }
 
-    std::array<uint8_t, grpc_core::kFrameHeaderSize + sizeof(status)>
+    if (IsExpired(deadline)) {
+        return SendTrailersOnlyResponse(worker->koma_fd, msg, stream,
+                                        kKomaDeadlineExceededTrailers,
+                                        worker->send_iovecs);
+    }
+
+    std::array<uint8_t, grpc_core::kFrameHeaderSize + sizeof(kKomaOkTrailers)>
         response_trailers;
     out = response_trailers.data();
-    grpc_core::Http2FrameHeader{sizeof(status), 0x1, 0x5, stream}.Serialize(out);
+    grpc_core::Http2FrameHeader{sizeof(kKomaOkTrailers), 0x1, 0x5, stream}.Serialize(out);
     out += grpc_core::kFrameHeaderSize;
-    memcpy(out, status, sizeof(status));
+    memcpy(out, kKomaOkTrailers, sizeof(kKomaOkTrailers));
 
     const size_t data_frame_count =
         (response_message.size() + kMaxDataFramePayload - 1) /
