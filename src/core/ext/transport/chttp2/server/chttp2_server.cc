@@ -616,8 +616,9 @@ void NewChttp2ServerListener::OnAccept(
         self->args_, tcp);
   if (new_args.has_value()) {
     connection_ref->Start(*new_args);
+  } else {
+    self->listener_state_->connection_quota()->ReleaseConnections(1);
   }
-  self->listener_state_->connection_quota()->ReleaseConnections(1);
 }
 
 void NewChttp2ServerListener::TcpServerShutdownComplete(
